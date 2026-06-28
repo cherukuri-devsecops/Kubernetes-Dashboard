@@ -55,7 +55,11 @@ data:
       configs:
         - from: 2020-10-24
           store: tsdb
+          {{- if .Values.loki.s3.bucket }}
           object_store: s3
+          {{- else }}
+          object_store: filesystem
+          {{- end }}
           schema: v13
           index:
             prefix: index_
@@ -65,6 +69,7 @@ data:
       tsdb_shipper:
         active_index_directory: /loki/index
         cache_location: /loki/index_cache
+      {{- if .Values.loki.s3.bucket }}
       aws:
         endpoint: ${LOKI_S3_ENDPOINT}
         bucketnames: ${LOKI_S3_BUCKET}
@@ -75,6 +80,10 @@ data:
         insecure: false
         http_config:
           insecure_skip_verify: false
+      {{- else }}
+      filesystem:
+        directory: /loki/chunks
+      {{- end }}
 
     limits_config:
       reject_old_samples: true

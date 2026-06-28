@@ -24,6 +24,9 @@ COPY --chown=appuser:appgroup app/ ./app/
 RUN mkdir -p /data && chown appuser:appgroup /data
 VOLUME ["/data"]
 
+# Kubeconfig upload staging directory
+RUN mkdir -p /var/kubeconfigs && chown appuser:appgroup /var/kubeconfigs
+
 USER appuser
 
 ENV FLASK_ENV=production

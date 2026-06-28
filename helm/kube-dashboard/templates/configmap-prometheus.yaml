@@ -21,7 +21,6 @@ data:
         static_configs:
           - targets: ["{{ include "kube-dashboard.fullname" . }}-backend:{{ .Values.backendService.port }}"]
 
-      Uncomment to enable Kubernetes API server scraping when Metrics Server is installed
       - job_name: kubernetes-apiservers
         kubernetes_sd_configs:
           - role: endpoints
