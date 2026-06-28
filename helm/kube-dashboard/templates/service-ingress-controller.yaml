@@ -18,14 +18,14 @@ spec:
   ports:
     - name: http
       port: 80
-      targetPort: http
+      targetPort: 80
       protocol: TCP
       {{- if and (eq .Values.ingress.bundledController.service.type "NodePort") .Values.ingress.bundledController.service.nodePort }}
       nodePort: {{ .Values.ingress.bundledController.service.nodePort }}
       {{- end }}
     - name: https
       port: 443
-      targetPort: https
+      targetPort: 443
       protocol: TCP
       {{- if and (eq .Values.ingress.bundledController.service.type "NodePort") .Values.ingress.bundledController.service.httpsNodePort }}
       nodePort: {{ .Values.ingress.bundledController.service.httpsNodePort }}

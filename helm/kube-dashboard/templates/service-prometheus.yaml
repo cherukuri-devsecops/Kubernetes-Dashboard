@@ -13,6 +13,6 @@ spec:
   ports:
     - name: http
       port: {{ .Values.prometheus.service.port }}
-      targetPort: http
+      targetPort: {{ .Values.prometheus.port }}
       protocol: TCP
 {{- end }}

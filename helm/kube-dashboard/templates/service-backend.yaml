@@ -13,6 +13,6 @@ spec:
   ports:
     - name: http
       port: {{ .Values.backendService.service.port }}
-      targetPort: http
+      targetPort: {{ .Values.backendService.port }}
       protocol: TCP
 {{- end }}

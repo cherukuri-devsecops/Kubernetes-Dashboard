@@ -13,6 +13,6 @@ spec:
   ports:
     - name: http
       port: {{ .Values.loki.service.port }}
-      targetPort: http
+      targetPort: {{ .Values.loki.port }}
       protocol: TCP
 {{- end }}

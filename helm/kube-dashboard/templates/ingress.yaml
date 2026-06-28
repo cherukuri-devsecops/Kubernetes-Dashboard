@@ -26,6 +26,16 @@ spec:
                 name: {{ include "kube-dashboard.fullname" . }}-ui
                 port:
                   name: http
+    # No-host rule: allows direct IP access (e.g. http://10.0.0.244/health)
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "kube-dashboard.fullname" . }}-ui
+                port:
+                  name: http
   {{- if .Values.ingress.tls }}
   tls:
     {{- toYaml .Values.ingress.tls | nindent 4 }}

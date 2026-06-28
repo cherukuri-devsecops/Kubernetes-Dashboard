@@ -13,10 +13,10 @@ spec:
   ports:
     - name: http
       port: {{ .Values.tempo.service.httpPort }}
-      targetPort: http
+      targetPort: {{ .Values.tempo.httpPort }}
       protocol: TCP
     - name: otlp-grpc
       port: {{ .Values.tempo.service.otlpGrpcPort }}
-      targetPort: otlp-grpc
+      targetPort: {{ .Values.tempo.otlpGrpcPort }}
       protocol: TCP
 {{- end }}

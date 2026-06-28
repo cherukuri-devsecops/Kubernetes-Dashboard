@@ -13,6 +13,6 @@ spec:
   ports:
     - name: http
       port: {{ .Values.uiService.service.port }}
-      targetPort: http
+      targetPort: {{ .Values.uiService.port }}
       protocol: TCP
 {{- end }}
