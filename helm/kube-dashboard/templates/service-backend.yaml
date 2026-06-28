@@ -6,11 +6,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kube-dashboard.labels" . | nindent 4 }}
-    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "backend-service") | nindent 4 }}
 spec:
   type: {{ .Values.backendService.service.type }}
   selector:
-    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "backend-service") | nindent 4 }}
+    {{- include "kube-dashboard.baseSelector" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.backendService.service.port }}

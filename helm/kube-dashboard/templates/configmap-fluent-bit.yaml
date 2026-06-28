@@ -1,0 +1,40 @@
+{{- if .Values.fluentBit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-fluent-bit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         {{ .Values.fluentBit.flushInterval }}
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  /fluent-bit/etc/parsers.conf
+
+    # Tail log files written by Kubernetes for every container in this pod.
+    # Path pattern: /var/log/pods/<namespace>_<pod-name-prefix>-*/<container>/<n>.log
+    [INPUT]
+        Name              tail
+        Path              /var/log/pods/{{ .Release.Namespace }}_{{ include "kube-dashboard.fullname" . }}-*/*/*.log
+        Tag               kube.<pod_name>.<container_name>
+        Tag_Regex         (?P<pod_name>[^_/]+)(?:_[^/]+){2}/(?P<container_name>[^/]+)/
+        multiline.parser  docker, cri
+        Refresh_Interval  5
+        Mem_Buf_Limit     10MB
+        Skip_Long_Lines   On
+        DB                /flb-data/flb.db
+
+    # Forward all collected logs to the Loki sidecar (localhost since same pod)
+    [OUTPUT]
+        Name          loki
+        Match         *
+        Host          localhost
+        Port          {{ .Values.loki.port }}
+        Labels        job=kube-dashboard,namespace={{ .Release.Namespace }}{{- if .Values.fluentBit.extraLokiLabels }},{{ .Values.fluentBit.extraLokiLabels }}{{- end }}
+        Label_Keys    $pod_name,$container_name
+        Line_Format   json
+        Remove_Keys   time
+{{- end }}

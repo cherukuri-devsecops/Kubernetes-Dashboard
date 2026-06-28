@@ -11,8 +11,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if .Values.ingress.className }}
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- $class := include "kube-dashboard.ingressClassName" . }}
+  {{- if $class }}
+  ingressClassName: {{ $class }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.host }}

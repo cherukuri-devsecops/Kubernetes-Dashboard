@@ -1,0 +1,13 @@
+{{- if and .Values.ingress.enabled .Values.ingress.bundledController.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+data:
+  {{- if .Values.ingress.bundledController.config }}
+  {{- toYaml .Values.ingress.bundledController.config | nindent 2 }}
+  {{- end }}
+{{- end }}

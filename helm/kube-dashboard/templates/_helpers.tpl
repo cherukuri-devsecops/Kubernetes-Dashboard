@@ -53,3 +53,33 @@ ServiceAccount name for the backend.
 {{- define "kube-dashboard.backendServiceAccountName" -}}
 {{- printf "%s-backend" (include "kube-dashboard.fullname" .) }}
 {{- end }}
+
+{{/*
+ServiceAccount name for the bundled ingress controller.
+*/}}
+{{- define "kube-dashboard.ingressControllerServiceAccountName" -}}
+{{- printf "%s-ingress-controller" (include "kube-dashboard.fullname" .) }}
+{{- end }}
+
+{{/*
+Base selector labels (name + instance only, no component).
+Used by the combined single-pod deployment and all Services so every Service
+routes to the one pod regardless of which container it targets.
+*/}}
+{{- define "kube-dashboard.baseSelector" -}}
+app.kubernetes.io/name: {{ include "kube-dashboard.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+IngressClass name used by the bundled controller and the Ingress resource.
+When bundledController is enabled this is derived from the release name so it
+is guaranteed to be unique per install. Otherwise falls back to ingress.className.
+*/}}
+{{- define "kube-dashboard.ingressClassName" -}}
+{{- if .Values.ingress.bundledController.enabled }}
+{{- include "kube-dashboard.fullname" . }}
+{{- else }}
+{{- .Values.ingress.className }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,10 @@
+{{- if and .Values.ingress.enabled .Values.ingress.bundledController.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+spec:
+  controller: k8s.io/{{ include "kube-dashboard.fullname" . }}
+{{- end }}

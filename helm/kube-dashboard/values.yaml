@@ -212,13 +212,53 @@ tempo:
       cpu: 500m
       memory: 512Mi
 
+# ── Fluent Bit ────────────────────────────────────────────────────────────────
+fluentBit:
+  enabled: true
+  image:
+    repository: fluent/fluent-bit
+    tag: "3.3"
+  # Flush interval in seconds
+  flushInterval: 5
+  # Extra Loki labels appended to every log line (key=value pairs)
+  extraLokiLabels: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
 # ── Ingress ───────────────────────────────────────────────────────────────────
 ingress:
   enabled: false
+  # className is ignored when bundledController.enabled is true (auto-set from release name)
   className: ""
   annotations: {}
   host: kube-dashboard.local
   tls: []
+  # bundledController deploys a dedicated nginx-ingress controller in this namespace
+  # so no cluster-level ingress controller is required
+  bundledController:
+    enabled: false
+    image:
+      repository: registry.k8s.io/ingress-nginx/controller
+      tag: "v1.11.2"
+    service:
+      type: LoadBalancer   # or NodePort
+      loadBalancerIP: "10.0.0.244"   # MetalLB: request this specific IP
+      nodePort: ""         # http NodePort (30000-32767), only when type: NodePort
+      httpsNodePort: ""    # https NodePort (30000-32767), only when type: NodePort
+    # Extra nginx ConfigMap keys (see ingress-nginx docs for available options)
+    config: {}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
 
 # ── Application secrets (set via --set or external secret manager) ────────────
 # These populate the kube-dashboard-app-secret Secret

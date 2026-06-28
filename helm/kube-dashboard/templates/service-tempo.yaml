@@ -6,11 +6,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "kube-dashboard.labels" . | nindent 4 }}
-    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "tempo") | nindent 4 }}
 spec:
   type: {{ .Values.tempo.service.type }}
   selector:
-    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "tempo") | nindent 4 }}
+    {{- include "kube-dashboard.baseSelector" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.tempo.service.httpPort }}

@@ -1,0 +1,422 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+    {{- include "kube-dashboard.baseSelector" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kube-dashboard.baseSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-dashboard.labels" . | nindent 8 }}
+        {{- include "kube-dashboard.baseSelector" . | nindent 8 }}
+    spec:
+      # Backend SA carries K8s API RBAC + ingress-controller RBAC (both bound to same SA)
+      serviceAccountName: {{ include "kube-dashboard.backendServiceAccountName" . }}
+      terminationGracePeriodSeconds: 60
+      # fsGroup 1000 grants group write access to the sqlite PVC for ui/backend (UID 1000)
+      securityContext:
+        fsGroup: 1000
+      containers:
+
+        # ── UI (Flask / Gunicorn+Gevent) ────────────────────────────────────────
+        {{- if .Values.uiService.enabled }}
+        - name: ui-service
+          image: "{{ .Values.uiService.image.repository }}:{{ .Values.uiService.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          ports:
+            - name: ui-http
+              containerPort: {{ .Values.uiService.port }}
+              protocol: TCP
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: LOG_LEVEL
+              value: {{ .Values.uiService.env.logLevel | quote }}
+            - name: CLUSTER_SCOPE
+              value: {{ .Values.uiService.env.clusterScope | quote }}
+            - name: DB_POLLER_ENABLED
+              value: {{ .Values.uiService.env.dbPollerEnabled | quote }}
+            - name: EVENT_POLL_INTERVAL
+              value: {{ .Values.uiService.env.eventPollInterval | quote }}
+            - name: METRIC_POLL_INTERVAL
+              value: {{ .Values.uiService.env.metricPollInterval | quote }}
+            - name: SESSION_COOKIE_SECURE
+              value: {{ .Values.uiService.env.sessionCookieSecure | quote }}
+            - name: TRUST_PROXY_HEADERS
+              value: {{ .Values.uiService.env.trustProxyHeaders | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.uiService.env.otelServiceName | quote }}
+            - name: SQLITE_PATH
+              value: /data/dashboard.db
+            # All sidecars share the pod network — reach each other on localhost
+            - name: BACKEND_SERVICE_URL
+              value: "http://localhost:{{ .Values.backendService.port }}"
+            - name: LOKI_URL
+              value: "http://localhost:{{ .Values.loki.port }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://localhost:{{ .Values.tempo.otlpGrpcPort }}"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: SECRET_KEY
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: AUTH_JWT_SECRET
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: AUTH_SERVICE_URL
+            - name: OAUTH_REDIRECT_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: OAUTH_REDIRECT_URI
+            - name: ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: ALLOWED_EMAILS
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.uiService.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.uiService.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.uiService.resources | nindent 12 }}
+        {{- end }}
+
+        # ── Backend (FastAPI / Uvicorn) ─────────────────────────────────────────
+        {{- if .Values.backendService.enabled }}
+        - name: backend-service
+          image: "{{ .Values.backendService.image.repository }}:{{ .Values.backendService.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          ports:
+            - name: api-http
+              containerPort: {{ .Values.backendService.port }}
+              protocol: TCP
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: LOG_LEVEL
+              value: {{ .Values.backendService.env.logLevel | quote }}
+            - name: CLUSTER_SCOPE
+              value: {{ .Values.backendService.env.clusterScope | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.backendService.env.otelServiceName | quote }}
+            - name: SQLITE_PATH
+              value: /data/dashboard.db
+            - name: LOKI_URL
+              value: "http://localhost:{{ .Values.loki.port }}"
+            - name: PROMETHEUS_URL
+              value: "http://localhost:{{ .Values.prometheus.port }}"
+            - name: TEMPO_URL
+              value: "http://localhost:{{ .Values.tempo.httpPort }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://localhost:{{ .Values.tempo.otlpGrpcPort }}"
+            - name: UI_ORIGIN
+              value: "http://localhost:{{ .Values.uiService.port }}"
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backendService.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.backendService.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backendService.resources | nindent 12 }}
+        {{- end }}
+
+        # ── Loki ────────────────────────────────────────────────────────────────
+        {{- if .Values.loki.enabled }}
+        - name: loki
+          image: "{{ .Values.loki.image.repository }}:{{ .Values.loki.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            runAsUser: 0
+          args:
+            - -config.file=/etc/loki/config.yaml
+            - -config.expand-env=true
+          ports:
+            - name: loki-http
+              containerPort: {{ .Values.loki.port }}
+              protocol: TCP
+            - name: loki-grpc
+              containerPort: 9096
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.loki.existingSecret | default (printf "%s-loki-s3" (include "kube-dashboard.fullname" .)) }}
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.loki.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.loki.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 10
+          volumeMounts:
+            - name: loki-config
+              mountPath: /etc/loki/config.yaml
+              subPath: config.yaml
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
+        {{- end }}
+
+        # ── Prometheus ──────────────────────────────────────────────────────────
+        {{- if .Values.prometheus.enabled }}
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            runAsUser: 0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
+            - --web.enable-lifecycle
+          ports:
+            - name: prom-http
+              containerPort: {{ .Values.prometheus.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: {{ .Values.prometheus.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: {{ .Values.prometheus.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: prometheus-data
+              mountPath: /prometheus
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+        {{- end }}
+
+        # ── Tempo ───────────────────────────────────────────────────────────────
+        {{- if .Values.tempo.enabled }}
+        - name: tempo
+          image: "{{ .Values.tempo.image.repository }}:{{ .Values.tempo.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - -config.file=/etc/tempo/config.yaml
+          ports:
+            - name: tempo-http
+              containerPort: {{ .Values.tempo.httpPort }}
+              protocol: TCP
+            - name: tempo-grpc
+              containerPort: {{ .Values.tempo.otlpGrpcPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.tempo.httpPort }}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ .Values.tempo.httpPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tempo-config
+              mountPath: /etc/tempo/config.yaml
+              subPath: config.yaml
+          resources:
+            {{- toYaml .Values.tempo.resources | nindent 12 }}
+        {{- end }}
+
+        # ── NGINX Ingress Controller ─────────────────────────────────────────────
+        {{- if and .Values.ingress.enabled .Values.ingress.bundledController.enabled }}
+        - name: ingress-controller
+          image: "{{ .Values.ingress.bundledController.image.repository }}:{{ .Values.ingress.bundledController.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: true   # required to bind ports 80/443
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+            runAsUser: 101
+          args:
+            - /nginx-ingress-controller
+            - --controller-class=k8s.io/{{ include "kube-dashboard.fullname" . }}
+            - --ingress-class={{ include "kube-dashboard.fullname" . }}
+            - --watch-namespace={{ .Release.Namespace }}
+            - --configmap={{ .Release.Namespace }}/{{ include "kube-dashboard.fullname" . }}-ingress-controller
+            - --election-id={{ include "kube-dashboard.fullname" . }}-leader
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LD_PRELOAD
+              value: /usr/local/lib/libmimalloc.so
+          ports:
+            - name: ingress-http
+              containerPort: 80
+              protocol: TCP
+            - name: ingress-https
+              containerPort: 443
+              protocol: TCP
+            - name: ingress-metrics
+              containerPort: 10254
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 10254
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 10254
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 1
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/wait-shutdown"]
+          resources:
+            {{- toYaml .Values.ingress.bundledController.resources | nindent 12 }}
+        {{- end }}
+
+        # ── Fluent Bit ──────────────────────────────────────────────────────────
+        {{- if .Values.fluentBit.enabled }}
+        - name: fluent-bit
+          image: "{{ .Values.fluentBit.image.repository }}:{{ .Values.fluentBit.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            runAsUser: 0   # must read log files owned by root
+          volumeMounts:
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: flb-db
+              mountPath: /flb-data
+          resources:
+            {{- toYaml .Values.fluentBit.resources | nindent 12 }}
+        {{- end }}
+
+      volumes:
+        - name: sqlite-data
+          {{- if .Values.sqlite.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.sqlite.persistence.existingClaim | default (printf "%s-sqlite" (include "kube-dashboard.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.loki.enabled }}
+        - name: loki-config
+          configMap:
+            name: {{ include "kube-dashboard.fullname" . }}-loki-config
+        {{- end }}
+        {{- if .Values.prometheus.enabled }}
+        - name: prometheus-config
+          configMap:
+            name: {{ include "kube-dashboard.fullname" . }}-prometheus-config
+        - name: prometheus-data
+          {{- if .Values.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.prometheus.persistence.existingClaim | default (printf "%s-prometheus" (include "kube-dashboard.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.tempo.enabled }}
+        - name: tempo-config
+          configMap:
+            name: {{ include "kube-dashboard.fullname" . }}-tempo-config
+        {{- end }}
+        {{- if .Values.fluentBit.enabled }}
+        - name: fluent-bit-config
+          configMap:
+            name: {{ include "kube-dashboard.fullname" . }}-fluent-bit
+        # Host path so Fluent Bit can read Kubernetes-managed container log files
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        # Small emptyDir for Fluent Bit's position DB (tracks read offsets)
+        - name: flb-db
+          emptyDir: {}
+        {{- end }}

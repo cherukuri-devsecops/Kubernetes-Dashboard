@@ -1,0 +1,149 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  UI_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/kube-dashboard-ui
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/kube-dashboard-backend
+  NAMESPACE: kube-dashboard
+  HELM_RELEASE: kube-dash
+
+jobs:
+  # ── Build UI image ───────────────────────────────────────────────────────────
+  build-ui:
+    runs-on: arc-runner-set
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build UI image
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            -f ui-service/Dockerfile \
+            -t $UI_IMAGE:${{ steps.meta.outputs.image_tag }} \
+            ui-service/
+
+      - name: Push UI image
+        run: docker push $UI_IMAGE:${{ steps.meta.outputs.image_tag }}
+
+  # ── Build backend image ──────────────────────────────────────────────────────
+  build-backend:
+    runs-on: arc-runner-set
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build backend image
+        run: |
+          docker build \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            -f backend-service/Dockerfile \
+            -t $BACKEND_IMAGE:${{ steps.meta.outputs.image_tag }} \
+            backend-service/
+
+      - name: Push backend image
+        run: docker push $BACKEND_IMAGE:${{ steps.meta.outputs.image_tag }}
+
+  # ── Security scan ────────────────────────────────────────────────────────────
+  # security-scan:
+  #   needs: [build-ui, build-backend]
+  #   runs-on: arc-runner-set
+  #   permissions:
+  #     security-events: write
+  #   strategy:
+  #     matrix:
+  #       image: [ui, backend]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Run Trivy vulnerability scan
+  #       uses: aquasecurity/trivy-action@0.29.0
+  #       with:
+  #         image-ref: >-
+  #           ${{ matrix.image == 'ui'
+  #             && format('{0}:{1}', env.UI_IMAGE, needs.build-ui.outputs.image_tag)
+  #             || format('{0}:{1}', env.BACKEND_IMAGE, needs.build-backend.outputs.image_tag) }}
+  #         format: sarif
+  #         output: trivy-results.sarif
+  #         severity: CRITICAL,HIGH
+  #         ignore-unfixed: true
+  #
+  #     - name: Upload results to GitHub Security tab
+  #       uses: github/codeql-action/upload-sarif@v3
+  #       if: always()
+  #       with:
+  #         sarif_file: trivy-results.sarif
+
+  # ── Deploy ───────────────────────────────────────────────────────────────────
+  deploy:
+    needs: [build-ui, build-backend]
+    runs-on: arc-runner-set
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Setup kubeconfig
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" > kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Helm upgrade
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./helm/kube-dashboard \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --set uiService.image.repository=${{ env.UI_IMAGE }} \
+            --set uiService.image.tag=${{ needs.build-ui.outputs.image_tag }} \
+            --set backendService.image.repository=${{ env.BACKEND_IMAGE }} \
+            --set backendService.image.tag=${{ needs.build-backend.outputs.image_tag }} \
+            --set global.imagePullPolicy=Always \
+            --set nfs.server=${{ secrets.NFS_SERVER }} \
+            --set secrets.secretKey=${{ secrets.SECRET_KEY }} \
+            --set secrets.authJwtSecret=${{ secrets.AUTH_JWT_SECRET }} \
+            --set ingress.enabled=true \
+            --set ingress.host=${{ vars.INGRESS_HOST }} \
+            --set ingress.bundledController.enabled=true \
+            --set ingress.bundledController.service.loadBalancerIP=10.0.0.244 \
+            --rollback-on-failure \
+            --timeout 5m \
+            --wait \
+            --history-max 5
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-kube-dashboard \
+            --namespace ${{ env.NAMESPACE }} \
+            --timeout=120s
+
+      - name: Smoke test
+        run: |
+          curl -sf http://${{ vars.INGRESS_HOST }}/health || exit 1

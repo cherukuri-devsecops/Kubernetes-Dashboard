@@ -1,0 +1,77 @@
+{{- if and .Values.ingress.enabled .Values.ingress.bundledController.enabled }}
+# The ingress controller runs as a sidecar in the combined pod, which uses the backend
+# ServiceAccount. The ClusterRole and Role below are bound to that same SA.
+# Minimal cluster-wide permissions: nodes (upstream routing) + ingressclasses (self-discovery)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-dashboard.backendServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# All other permissions are namespace-scoped (controller runs with --watch-namespace)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "endpoints", "pods", "secrets", "services", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kube-dashboard.fullname" . }}-ingress-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kube-dashboard.backendServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
