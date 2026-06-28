@@ -13,9 +13,6 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.ingress.bundledController.service.type }}
-  {{- if and (eq .Values.ingress.bundledController.service.type "LoadBalancer") .Values.ingress.bundledController.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.ingress.bundledController.service.loadBalancerIP | quote }}
-  {{- end }}
   selector:
     {{- include "kube-dashboard.baseSelector" . | nindent 4 }}
   ports:
