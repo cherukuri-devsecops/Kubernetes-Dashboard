@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -23,10 +24,23 @@ setup_bp = Blueprint("setup", __name__)
 
 # ── Local filesystem fallback for kubeconfig storage ─────────────────────────
 
+def _safe_kubeconfig_name(name: str) -> str:
+    """Validate kubeconfig name for safe filesystem use."""
+    candidate = (name or "default").strip()
+    if candidate in {".", ".."}:
+        raise ValueError("Invalid kubeconfig name")
+    if "/" in candidate or "\\" in candidate:
+        raise ValueError("Invalid kubeconfig name")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", candidate):
+        raise ValueError("Invalid kubeconfig name")
+    return candidate
+
+
 def _kc_file_path(email: str, name: str = "default") -> Path:
     """Deterministic file path for a named kubeconfig, keyed by email hash."""
+    safe_name = _safe_kubeconfig_name(name)
     uid = hashlib.sha256((email or "local").encode()).hexdigest()[:16]
-    return Path(KUBECONFIG_DIR) / f"{uid}_{name}.yaml"
+    return Path(KUBECONFIG_DIR) / f"{uid}_{safe_name}.yaml"
 
 
 def _save_kubeconfig_local(content: str, email: str, name: str = "default") -> str:
