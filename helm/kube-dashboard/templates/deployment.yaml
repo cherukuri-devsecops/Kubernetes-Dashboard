@@ -8,6 +8,8 @@ metadata:
     {{- include "kube-dashboard.baseSelector" . | nindent 4 }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "kube-dashboard.baseSelector" . | nindent 6 }}
@@ -64,6 +66,10 @@ spec:
               value: "http://localhost:{{ .Values.backendService.port }}"
             - name: LOKI_URL
               value: "http://localhost:{{ .Values.loki.port }}"
+            - name: PROMETHEUS_URL
+              value: "http://localhost:{{ .Values.prometheus.port }}"
+            - name: FLUENT_BIT_URL
+              value: "http://localhost:2020"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://localhost:{{ .Values.tempo.otlpGrpcPort }}"
             - name: SECRET_KEY

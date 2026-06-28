@@ -9,7 +9,7 @@ metadata:
     {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "ingress-controller") | nindent 4 }}
   {{- if and (eq .Values.ingress.bundledController.service.type "LoadBalancer") .Values.ingress.bundledController.service.loadBalancerIP }}
   annotations:
-    metallb.universe.tf/loadBalancerIPs: {{ .Values.ingress.bundledController.service.loadBalancerIP | quote }}
+    metallb.io/loadBalancerIPs: {{ .Values.ingress.bundledController.service.loadBalancerIP | quote }}
   {{- end }}
 spec:
   type: {{ .Values.ingress.bundledController.service.type }}

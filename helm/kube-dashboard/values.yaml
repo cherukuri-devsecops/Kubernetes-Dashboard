@@ -217,7 +217,7 @@ fluentBit:
   enabled: true
   image:
     repository: fluent/fluent-bit
-    tag: "3.3.2"
+    tag: "4.2.6-amd64"
   # Flush interval in seconds
   flushInterval: 5
   # Extra Loki labels appended to every log line (key=value pairs)
