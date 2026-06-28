@@ -116,6 +116,16 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG }}" > kubeconfig
           echo "KUBECONFIG=$PWD/kubeconfig" >> "$GITHUB_ENV"
 
+      - name: Release stuck NFS PersistentVolumes
+        run: |
+          for PV in ${{ env.HELM_RELEASE }}-kube-dashboard-sqlite ${{ env.HELM_RELEASE }}-kube-dashboard-prometheus; do
+            PHASE=$(kubectl get pv "$PV" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [ "$PHASE" = "Released" ]; then
+              echo "Clearing claimRef on Released PV $PV"
+              kubectl patch pv "$PV" -p '{"spec":{"claimRef":null}}'
+            fi
+          done
+
       - name: Helm upgrade
         run: |
           helm upgrade --install ${{ env.HELM_RELEASE }} ./helm/kube-dashboard \
@@ -134,7 +144,7 @@ jobs:
             --set ingress.bundledController.enabled=true \
             --set ingress.bundledController.service.loadBalancerIP=10.0.0.244 \
             --rollback-on-failure \
-            --timeout 5m \
+            --timeout 8m \
             --wait \
             --history-max 5
 

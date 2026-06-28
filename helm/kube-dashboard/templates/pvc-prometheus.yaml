@@ -14,9 +14,9 @@ spec:
       storage: {{ .Values.prometheus.persistence.size }}
   {{- if .Values.prometheus.persistence.storageClass }}
   storageClassName: {{ .Values.prometheus.persistence.storageClass }}
-  {{- else }}
-  # Empty storageClassName binds to the static NFS PV created by pv-prometheus.yaml
+  {{- else if .Values.nfs.server }}
   storageClassName: ""
   volumeName: {{ include "kube-dashboard.fullname" . }}-prometheus
   {{- end }}
+  {{- /* If neither storageClass nor nfs.server is set, omit storageClassName to use the cluster default */ -}}
 {{- end }}

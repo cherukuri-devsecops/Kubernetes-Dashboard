@@ -14,9 +14,9 @@ spec:
       storage: {{ .Values.sqlite.persistence.size }}
   {{- if .Values.sqlite.persistence.storageClass }}
   storageClassName: {{ .Values.sqlite.persistence.storageClass }}
-  {{- else }}
-  # Empty storageClassName binds to the static NFS PV created by pv-sqlite.yaml
+  {{- else if .Values.nfs.server }}
   storageClassName: ""
   volumeName: {{ include "kube-dashboard.fullname" . }}-sqlite
   {{- end }}
+  {{- /* If neither storageClass nor nfs.server is set, omit storageClassName to use the cluster default */ -}}
 {{- end }}
