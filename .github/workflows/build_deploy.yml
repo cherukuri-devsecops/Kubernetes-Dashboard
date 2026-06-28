@@ -140,7 +140,6 @@ jobs:
             --set secrets.secretKey=${{ secrets.SECRET_KEY }} \
             --set secrets.authJwtSecret=${{ secrets.AUTH_JWT_SECRET }} \
             --set ingress.enabled=true \
-            --set ingress.host=${{ vars.INGRESS_HOST }} \
             --set ingress.bundledController.enabled=true \
             --set ingress.bundledController.service.loadBalancerIP=10.0.0.244 \
             --rollback-on-failure \
@@ -156,4 +155,4 @@ jobs:
 
       - name: Smoke test
         run: |
-          curl -sf http://${{ vars.INGRESS_HOST }}/health || exit 1
+          curl -sf http://10.0.0.244/health || exit 1
