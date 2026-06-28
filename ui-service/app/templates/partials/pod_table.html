@@ -1,0 +1,69 @@
+<div id="pod-table-wrap"
+     hx-get="/pods?ns={{ ns|urlencode }}"
+     hx-trigger="pod-refresh"
+     hx-swap="outerHTML"
+     data-pod-signature="{{ pod_signature }}">
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Namespace</th><th>Name</th><th>Status</th>
+      <th>Ready</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>Node</th><th>IP</th><th>Age</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for p in pods %}
+    {% set rc, tc = ready_count(p) %}
+    {% set ph = p.status.phase or 'Unknown' %}
+    {% set rs = restarts(p) %}
+    {% set pm = pod_metrics.get(p.metadata.namespace ~ '/' ~ p.metadata.name) if pod_metrics is defined else none %}
+    <tr class="{{ 'tr-err' if ph in ('Failed',) or rs > 10 else 'tr-warn' if ph == 'Pending' else '' }}">
+      <td style="color:var(--faint)">{{ p.metadata.namespace }}</td>
+      <td>
+        <a class="row-link" href="/pods/{{ p.metadata.namespace }}/{{ p.metadata.name }}">
+          {{ p.metadata.name }}
+        </a>
+      </td>
+      <td>
+        <span class="dot {{ phase_cls(ph) }}"></span>
+        <span style="font-size:12px">{{ ph }}</span>
+      </td>
+      <td>
+        <span class="ready">
+          <span class="r">{{ rc }}</span><span class="s">/{{ tc }}</span>
+        </span>
+      </td>
+      <td style="color:{{ 'var(--err)' if rs > 10 else 'var(--warn)' if rs > 3 else 'inherit' }}">
+        {{ rs }}
+      </td>
+      <td style="font-size:12px;white-space:nowrap;color:var(--accent)">
+        {% if pm %}{{ fmt_cpu(pm.cpu_m) }}{% else %}<span style="color:var(--faint)">—</span>{% endif %}
+      </td>
+      <td style="font-size:12px;white-space:nowrap;color:var(--accent)">
+        {% if pm %}{{ fmt_mem(pm.mem_b) }}{% else %}<span style="color:var(--faint)">—</span>{% endif %}
+      </td>
+      <td style="color:var(--faint);font-size:12px">{{ p.spec.node_name or '—' }}</td>
+      <td style="color:var(--faint);font-size:12px">{{ p.status.pod_ip or '—' }}</td>
+      <td style="color:var(--faint)">{{ age(p.metadata.creation_timestamp) }}</td>
+      <td style="text-align:right;white-space:nowrap">
+        {% if can('get', 'pods', p.metadata.namespace) %}
+        <button class="btn btn-sm" title="Edit YAML"
+                onclick="openEditor('Pod','{{ p.metadata.namespace }}','{{ p.metadata.name }}')">
+          <i class="ti ti-code"></i>
+        </button>
+        {% endif %}
+        {% if can('delete', 'pods', p.metadata.namespace) %}
+        <button class="btn btn-sm danger" title="Delete pod"
+                onclick="deleteResource('Pod','{{ p.metadata.namespace }}','{{ p.metadata.name }}')">
+          <i class="ti ti-trash"></i>
+        </button>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11" class="empty">
+      <i class="ti ti-circles-relation"></i>No pods found
+    </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>

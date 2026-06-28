@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in — k8s Observability</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/dist/tabler-icons.min.css">
+<style>
+html,body{height:100%;margin:0}
+.login-page{
+  min-height:100vh;background:var(--bg);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+  background-image:
+    radial-gradient(circle at 50% 10%, rgba(37, 99, 235, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 15% 80%, rgba(34, 197, 94, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 85% 20%, rgba(6, 182, 212, 0.07) 0%, transparent 50%),
+    radial-gradient(circle at 80% 85%, rgba(139, 92, 246, 0.04) 0%, transparent 45%);
+}
+.login-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.012) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.012) 1px, transparent 1px);
+  background-size: 44px 44px;
+  background-position: center center;
+  mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 90%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 90%);
+  pointer-events: none;
+}
+.login-card{
+  background:rgba(10, 17, 38, 0.55);
+  backdrop-filter:blur(28px);
+  -webkit-backdrop-filter:blur(28px);
+  border:1px solid rgba(37, 99, 235, 0.18);
+  border-radius:20px;
+  padding:52px 44px;width:100%;max-width:440px;text-align:center;
+  box-shadow:
+    0 24px 60px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 0 0 1px rgba(6,182,212,0.06);
+  transition:all 0.3s cubic-bezier(0.4,0,0.2,1);
+  z-index:2;
+}
+.login-card:hover {
+  transform:translateY(-2px);
+  border-color:rgba(37,99,235,0.32);
+  box-shadow:
+    0 32px 80px rgba(0,0,0,0.65),
+    inset 0 1px 0 rgba(255,255,255,0.1),
+    0 0 32px rgba(37,99,235,0.1),
+    0 0 16px rgba(34,197,94,0.05);
+}
+
+/* Logo area */
+.login-logo{margin-bottom:24px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.login-logo img {
+  filter:
+    drop-shadow(0 0 20px rgba(37,99,235,0.4))
+    drop-shadow(0 0 10px rgba(34,197,94,0.2));
+  animation: logo-breathe 4s ease-in-out infinite;
+}
+@keyframes logo-breathe {
+  0%,100% { filter: drop-shadow(0 0 18px rgba(37,99,235,0.35)) drop-shadow(0 0 8px rgba(34,197,94,0.18)); }
+  50%      { filter: drop-shadow(0 0 28px rgba(6,182,212,0.5))  drop-shadow(0 0 14px rgba(34,197,94,0.3)); }
+}
+
+/* Brand name with logo gradient */
+.login-brand{
+  font-size:26px;font-weight:800;letter-spacing:.04em;
+  color:var(--text);
+  margin-top:4px;
+}
+.login-brand span{
+  background: linear-gradient(135deg, #2563eb 0%, #06b6d4 50%, #22c55e 100%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  background-clip:text;
+}
+.login-sub{color:var(--muted);font-size:13.5px;margin-bottom:36px;line-height:1.65}
+
+/* Google sign-in button */
+.google-btn{
+  display:flex;align-items:center;justify-content:center;gap:12px;
+  width:100%;padding:14px 20px;
+  background:#ffffff;color:#0f172a;border:none;border-radius:11px;
+  font-family:var(--sans);font-size:14px;font-weight:600;
+  cursor:pointer;text-decoration:none;
+  transition:all 0.25s cubic-bezier(0.4,0,0.2,1);
+  box-shadow:0 4px 14px rgba(0,0,0,0.3);
+}
+.google-btn:hover{
+  box-shadow:0 8px 28px rgba(0,0,0,0.4), 0 0 20px rgba(37,99,235,0.25);
+  transform:translateY(-2px);text-decoration:none;color:#0f172a;
+}
+.google-btn:active{transform:translateY(0)}
+
+.divider{display:flex;align-items:center;gap:12px;margin:28px 0;color:var(--faint);font-size:11px}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.login-error{
+  background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);
+  border-radius:var(--r);padding:10px 14px;color:#f87171;font-size:12px;
+  margin-bottom:20px;display:flex;align-items:center;gap:8px;
+}
+.login-footer{margin-top:32px;color:var(--faint);font-size:11px;text-align:center;position:relative;z-index:2}
+.login-footer a{color:var(--faint)}
+
+/* Gradient indicator dots */
+.dots{display:flex;gap:7px;justify-content:center;margin-top:32px;align-items:center}
+.dot-d{width:6px;height:6px;border-radius:50%;background:var(--border)}
+.dot-d.on{
+  background:linear-gradient(135deg,#2563eb,#22c55e);
+  box-shadow:0 0 8px rgba(37,99,235,0.5);
+  width:20px;border-radius:4px;
+}
+</style>
+</head>
+<body>
+<div class="login-page">
+  <div class="login-card">
+
+    <div class="login-logo">
+      <!-- Full hexagonal logo with 6-panel design + K8s wheel -->
+      <img src="{{ url_for('static', filename='image.png') }}"
+           width="140" height="140" alt="K8s Observability Dashboard">
+      <div class="login-brand"><span>k8s</span> Observability</div>
+    </div>
+
+    <div class="login-sub">
+      Kubernetes cluster observability dashboard.<br>
+      Sign in with your Google account to continue.
+    </div>
+
+    {% if error %}
+    <div class="login-error">
+      <i class="ti ti-alert-circle"></i> {{ error }}
+    </div>
+    {% endif %}
+
+    <a class="google-btn" href="{{ url_for('auth.auth_google') }}">
+      <!-- Google G logo SVG -->
+      <svg width="20" height="20" viewBox="0 0 48 48">
+        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.6 33 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z"/>
+        <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.1 7.9 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/>
+        <path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.5 35.5 26.9 36 24 36c-5.2 0-9.5-3-11.3-7.3l-6.6 5C9.8 39.7 16.4 44 24 44z"/>
+        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.9 2.5-2.5 4.6-4.6 6.1l6.2 5.2C40.9 36.1 44 30.4 44 24c0-1.2-.1-2.3-.4-3.5z"/>
+      </svg>
+      Sign in with Google
+    </a>
+
+    <div class="divider">or</div>
+
+    <div style="font-size:12px;color:var(--faint);line-height:1.7">
+      <i class="ti ti-lock" style="font-size:13px;margin-right:4px"></i>
+      Access is controlled by your administrator.<br>
+      Only approved accounts can sign in.
+    </div>
+
+    <div class="dots">
+      <div class="dot-d on"></div>
+      <div class="dot-d"></div>
+      <div class="dot-d"></div>
+    </div>
+  </div>
+
+  <div class="login-footer" style="margin-top:24px">
+    k8s Observability &nbsp;·&nbsp; Cluster Observability Dashboard
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Ingresses <span style="font-size:14px;font-weight:400;color:var(--faint)">{{ ingresses|length }}</span></h1>
+  {% if can('create', 'ingresses') %}
+  <div class="actions">
+    <button class="btn" onclick="openEditor()" title="Create new Ingress"><i class="ti ti-plus"></i> New</button>
+  </div>
+  {% endif %}
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Namespace</th><th>Name</th><th>Class</th><th>Hosts</th><th>Address</th><th>Age</th><th style="text-align:right">Actions</th></tr></thead>
+    <tbody>
+    {% for ing in ingresses %}
+    {% set hosts = ing.spec.rules | map(attribute='host') | list if ing.spec.rules else [] %}
+    {% set addr = ing.status.load_balancer.ingress[0].ip or ing.status.load_balancer.ingress[0].hostname if (ing.status.load_balancer and ing.status.load_balancer.ingress) else '—' %}
+    <tr>
+      <td style="color:var(--faint)">{{ ing.metadata.namespace }}</td>
+      <td><a class="row-link" href="/ingresses/{{ ing.metadata.namespace }}/{{ ing.metadata.name }}"><strong>{{ ing.metadata.name }}</strong></a></td>
+      <td style="font-size:12px;color:var(--muted)">{{ ing.spec.ingress_class_name or '—' }}</td>
+      <td style="font-size:12px;color:var(--info)">{{ hosts|join(', ') or '—' }}</td>
+      <td style="font-size:12px;color:var(--accent)">{{ addr }}</td>
+      <td style="color:var(--faint)">{{ age(ing.metadata.creation_timestamp) }}</td>
+      <td style="text-align:right">
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          {% if can('update', 'ingresses', ing.metadata.namespace) %}
+          <button class="btn btn-sm" title="Edit YAML"
+                  onclick="openEditor('Ingress','{{ ing.metadata.namespace }}','{{ ing.metadata.name }}')">
+            <i class="ti ti-code"></i>
+          </button>
+          {% endif %}
+          {% if can('delete', 'ingresses', ing.metadata.namespace) %}
+          <button class="btn btn-sm danger" title="Delete"
+                  onclick="deleteResource('Ingress','{{ ing.metadata.namespace }}','{{ ing.metadata.name }}','/ingresses')">
+            <i class="ti ti-trash"></i>
+          </button>
+          {% else %}
+          <span class="btn btn-sm danger rbac-denied" title="Insufficient permissions"><i class="ti ti-trash"></i></span>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" style="text-align:center;color:var(--faint);padding:24px">No ingresses found.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

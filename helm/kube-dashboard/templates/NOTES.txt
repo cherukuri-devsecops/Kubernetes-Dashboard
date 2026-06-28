@@ -1,0 +1,27 @@
+Kube Dashboard has been deployed!
+
+Services running in namespace: {{ .Release.Namespace }}
+
+  UI Service:       {{ include "kube-dashboard.fullname" . }}-ui        (port {{ .Values.uiService.port }})
+  Backend Service:  {{ include "kube-dashboard.fullname" . }}-backend   (port {{ .Values.backendService.port }})
+  Loki:             {{ include "kube-dashboard.fullname" . }}-loki       (port {{ .Values.loki.port }})
+  Prometheus:       {{ include "kube-dashboard.fullname" . }}-prometheus (port {{ .Values.prometheus.port }})
+  Tempo:            {{ include "kube-dashboard.fullname" . }}-tempo      (HTTP {{ .Values.tempo.httpPort }}, OTLP gRPC {{ .Values.tempo.otlpGrpcPort }})
+
+{{- if .Values.ingress.enabled }}
+Access the dashboard at: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+To access the dashboard locally, run:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kube-dashboard.fullname" . }}-ui {{ .Values.uiService.port }}:{{ .Values.uiService.port }}
+
+Then open: http://localhost:{{ .Values.uiService.port }}
+{{- end }}
+
+NOTE: Loki is configured for S3 storage. Ensure you set the S3 credentials:
+  --set loki.s3.endpoint=<endpoint> \
+  --set loki.s3.bucket=<bucket> \
+  --set loki.s3.accessKeyId=<key> \
+  --set loki.s3.secretAccessKey=<secret>
+
+Or create an existing secret and reference it with:
+  --set loki.existingSecret=<secret-name>

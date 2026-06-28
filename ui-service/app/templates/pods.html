@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Pods <span style="font-size:14px;font-weight:400;color:var(--faint);margin-left:8px">{{ pods|length }}</span></h1>
+</div>
+
+<!-- Toolbar with NS filter -->
+<div class="toolbar">
+  <label for="ns-select"><i class="ti ti-box-multiple" style="font-size:14px"></i> Namespace</label>
+  <select id="ns-select"
+          hx-get="/pods" hx-trigger="change"
+          hx-target="#pod-table-wrap" hx-include="#ns-select"
+          hx-swap="outerHTML"
+          name="ns">
+    <option value="" {{ 'selected' if not selected_ns }}>all namespaces</option>
+    {% for n in namespaces %}
+    <option value="{{ n }}" {{ 'selected' if n == selected_ns }}>{{ n }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<!-- Pod table (HTMX target for refresh + filter) -->
+{% include "partials/pod_table.html" %}
+
+<script>
+(function(){
+  if (window.__podAdaptiveRefresh) return;
+  window.__podAdaptiveRefresh = true;
+
+  const FAST_MS = 5000;
+  const NORMAL_MS = 15000;
+  const HIDDEN_MS = 60000;
+  const ERROR_MS = 30000;
+  let timer = null;
+  let inFlight = false;
+  let lastSignature = null;
+
+  function tableWrap() {
+    return document.getElementById('pod-table-wrap');
+  }
+
+  function schedule(delay) {
+    clearTimeout(timer);
+    if (!tableWrap()) return;
+    timer = setTimeout(refresh, delay);
+  }
+
+  function nextDelay() {
+    const wrap = tableWrap();
+    if (!wrap || document.hidden) return HIDDEN_MS;
+    const signature = wrap.dataset.podSignature || '';
+    const changed = lastSignature && signature && signature !== lastSignature;
+    lastSignature = signature || lastSignature;
+    return changed ? FAST_MS : NORMAL_MS;
+  }
+
+  function refresh() {
+    const wrap = tableWrap();
+    if (!wrap) return;
+    if (document.hidden) {
+      schedule(HIDDEN_MS);
+      return;
+    }
+    if (inFlight) {
+      schedule(NORMAL_MS);
+      return;
+    }
+    inFlight = true;
+    htmx.trigger(wrap, 'pod-refresh');
+  }
+
+  function init() {
+    if (!window.htmx) return;
+    const wrap = tableWrap();
+    if (!wrap) return;
+    lastSignature = wrap.dataset.podSignature || null;
+    schedule(NORMAL_MS);
+
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+      if (evt.detail.target && evt.detail.target.id === 'pod-table-wrap') {
+        inFlight = false;
+        schedule(nextDelay());
+      }
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function(evt) {
+      if (evt.detail.elt && evt.detail.elt.id === 'pod-table-wrap' && evt.detail.failed) {
+        inFlight = false;
+        schedule(ERROR_MS);
+      }
+    });
+
+    document.addEventListener('visibilitychange', function() {
+      schedule(document.hidden ? HIDDEN_MS : FAST_MS);
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+{% endblock %}

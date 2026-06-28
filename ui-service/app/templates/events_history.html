@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Events History
+    <span style="font-size:14px;font-weight:400;color:var(--faint);margin-left:8px">
+      {{ total }} events · last {{ hours }}h · from DB
+    </span>
+  </h1>
+  <a class="btn" href="/events" style="margin-left:auto"><i class="ti ti-bolt"></i> Live events</a>
+</div>
+
+<form method="get" action="/events/history" class="toolbar" style="margin-bottom:14px;gap:12px">
+  <label>Namespace
+    <select name="ns">
+      <option value="">all</option>
+      {% for n in namespaces %}
+        <option value="{{ n }}" {{ 'selected' if n == selected_ns }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Type
+    <select name="type">
+      <option value="">all</option>
+      <option value="Normal"  {{ 'selected' if selected_type=='Normal'  }}>Normal</option>
+      <option value="Warning" {{ 'selected' if selected_type=='Warning' }}>Warning</option>
+    </select>
+  </label>
+  <label>Range
+    <select name="hours">
+      {% for h in [1,6,24,72,168,720] %}
+        <option value="{{ h }}" {{ 'selected' if h == hours }}>{{ h }}h</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="btn primary" type="submit"><i class="ti ti-filter"></i> Apply</button>
+</form>
+
+<div style="overflow:auto;border:1px solid var(--border,#252830);border-radius:6px">
+<table class="datatable" style="width:100%;border-collapse:collapse;font-size:13px">
+  <thead><tr style="background:var(--bg-2,#11141a)">
+    {% for h in ['Last seen','First seen','Type','Reason','Ns','Object','Message','Count'] %}
+    <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border,#252830);
+               color:var(--faint);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.4px">{{ h }}</th>
+    {% endfor %}
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr style="border-bottom:1px solid var(--border,#1a1d24)">
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace;color:var(--faint)">{{ r.last_seen.strftime('%Y-%m-%d %H:%M:%S') if r.last_seen else '—' }}</td>
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace;color:var(--faint)">{{ r.first_seen.strftime('%Y-%m-%d %H:%M:%S') if r.first_seen else '—' }}</td>
+      <td style="padding:8px 12px"><span class="badge {{ 'err' if r.type=='Warning' else 'ok' }}">{{ r.type }}</span></td>
+      <td style="padding:8px 12px">{{ r.reason }}</td>
+      <td style="padding:8px 12px;color:var(--faint)">{{ r.ns }}</td>
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace">{{ r.kind }}/{{ r.object_name }}</td>
+      <td style="padding:8px 12px;color:var(--fg)">{{ r.message }}</td>
+      <td style="padding:8px 12px;text-align:right">{{ r.count }}</td>
+    </tr>
+    {% endfor %}
+    {% if not rows %}
+    <tr><td colspan="8" style="padding:30px;text-align:center;color:var(--faint)">
+      No events in this range. The poller writes every {{ 30 }}s; if the cluster was just connected, wait a moment and refresh.
+    </td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

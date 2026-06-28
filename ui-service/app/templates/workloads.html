@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>StatefulSets &amp; DaemonSets</h1></div>
+
+<!-- StatefulSets -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">StatefulSets <span class="cnt">{{ sts|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Ready</th><th>Replicas</th><th>Service</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for s in sts %}
+  {% set ready = s.status.ready_replicas or 0 %}{% set desired = s.spec.replicas or 0 %}
+  <tr class="{{ '' if ready==desired else 'tr-warn' }}">
+    <td style="color:var(--faint)">{{ s.metadata.namespace }}</td>
+    <td><a class="row-link" href="/statefulsets/{{ s.metadata.namespace }}/{{ s.metadata.name }}"><strong>{{ s.metadata.name }}</strong></a></td>
+    <td><span class="dot {{ 'ok' if ready==desired else 'warn' }}"></span>
+        <span class="ready"><span class="r">{{ ready }}</span><span class="s">/{{ desired }}</span></span></td>
+    <td><div class="pbar"><div class="pbar-fill {{ '' if ready==desired else 'warn' }}"
+        style="width:{{ (ready/desired*100)|round|int if desired else 0 }}%"></div></div></td>
+    <td style="color:var(--faint);font-size:12px">{{ s.spec.service_name or '—' }}</td>
+    <td style="color:var(--faint)">{{ age(s.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty"><i class="ti ti-stack-2"></i>No StatefulSets</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- DaemonSets -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">DaemonSets <span class="cnt">{{ ds|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Desired</th><th>Current</th><th>Ready</th><th>Available</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for d in ds %}
+  {% set ok = (d.status.number_ready or 0) == (d.status.desired_number_scheduled or 0) %}
+  <tr class="{{ '' if ok else 'tr-warn' }}">
+    <td style="color:var(--faint)">{{ d.metadata.namespace }}</td>
+    <td><a class="row-link" href="/daemonsets/{{ d.metadata.namespace }}/{{ d.metadata.name }}"><strong>{{ d.metadata.name }}</strong></a></td>
+    <td>{{ d.status.desired_number_scheduled or 0 }}</td>
+    <td>{{ d.status.current_number_scheduled or 0 }}</td>
+    <td><span class="dot {{ 'ok' if ok else 'warn' }}"></span>{{ d.status.number_ready or 0 }}</td>
+    <td>{{ d.status.number_available or 0 }}</td>
+    <td style="color:var(--faint)">{{ age(d.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-server"></i>No DaemonSets</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

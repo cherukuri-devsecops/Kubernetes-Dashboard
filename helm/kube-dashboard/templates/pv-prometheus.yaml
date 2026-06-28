@@ -1,0 +1,22 @@
+{{- if and .Values.prometheus.enabled .Values.prometheus.persistence.enabled (not .Values.prometheus.persistence.existingClaim) .Values.nfs.server }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-prometheus
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  capacity:
+    storage: {{ .Values.prometheus.persistence.size }}
+  accessModes:
+    - {{ .Values.prometheus.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: {{ .Values.nfs.server | quote }}
+    path: {{ .Values.nfs.prometheusPath | quote }}
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ include "kube-dashboard.fullname" . }}-prometheus
+{{- end }}

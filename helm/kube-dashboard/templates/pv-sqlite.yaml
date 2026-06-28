@@ -1,0 +1,22 @@
+{{- if and .Values.sqlite.persistence.enabled (not .Values.sqlite.persistence.existingClaim) .Values.nfs.server }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-sqlite
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sqlite
+spec:
+  capacity:
+    storage: {{ .Values.sqlite.persistence.size }}
+  accessModes:
+    - {{ .Values.sqlite.persistence.accessMode }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: {{ .Values.nfs.server | quote }}
+    path: {{ .Values.nfs.sqlitePath | quote }}
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ include "kube-dashboard.fullname" . }}-sqlite
+{{- end }}

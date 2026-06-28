@@ -1,0 +1,22 @@
+{{- if and .Values.prometheus.enabled .Values.prometheus.persistence.enabled (not .Values.prometheus.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.prometheus.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.persistence.size }}
+  {{- if .Values.prometheus.persistence.storageClass }}
+  storageClassName: {{ .Values.prometheus.persistence.storageClass }}
+  {{- else }}
+  # Empty storageClassName binds to the static NFS PV created by pv-prometheus.yaml
+  storageClassName: ""
+  volumeName: {{ include "kube-dashboard.fullname" . }}-prometheus
+  {{- end }}
+{{- end }}

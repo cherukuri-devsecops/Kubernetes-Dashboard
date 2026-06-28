@@ -1,0 +1,15 @@
+apiVersion: v2
+name: kube-dashboard
+description: Kubernetes Dashboard with full observability stack (Loki, Prometheus, Tempo)
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - kubernetes
+  - dashboard
+  - observability
+  - loki
+  - prometheus
+  - tempo
+maintainers:
+  - name: cherukuri

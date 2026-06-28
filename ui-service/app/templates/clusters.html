@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1><i class="ti ti-topology-star-3" style="color:var(--teal)"></i> Clusters
+    <span style="font-size:13px;font-weight:400;color:var(--faint);margin-left:8px">Multi-cluster management</span>
+  </h1>
+</div>
+
+{% if request.args.get('error') %}
+<div class="alert alert-err" style="margin-bottom:20px">
+  <i class="ti ti-alert-circle"></i> {{ request.args.get('error') }}
+</div>
+{% endif %}
+
+<!-- Add cluster -->
+<div class="card" style="margin-bottom:24px;padding:24px">
+  <div class="card-title" style="margin-bottom:16px"><i class="ti ti-plus"></i> Add / Replace Cluster</div>
+  <form action="/clusters/add" method="post" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+    <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token','') }}">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <label style="font-size:11px;color:var(--muted);font-weight:600">Cluster Name</label>
+      <input name="cluster_name" placeholder="e.g. prod, staging, local" class="form-control" style="min-width:200px">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <label style="font-size:11px;color:var(--muted);font-weight:600">Kubeconfig File</label>
+      <input type="file" name="kubeconfig" accept=".yaml,.yml,.conf" class="form-control">
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer">
+      <input type="checkbox" name="activate" value="1" checked style="accent-color:var(--teal)"> Activate after upload
+    </label>
+    <button type="submit" class="btn">
+      <i class="ti ti-upload"></i> Upload &amp; Save
+    </button>
+  </form>
+</div>
+
+<!-- Saved clusters -->
+<div class="card" style="padding:0;overflow:hidden">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Mode</th>
+        <th>Status</th>
+        <th>Updated</th>
+        <th style="text-align:right">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% if configs %}
+      {% for c in configs %}
+      {% set is_active = (c.name == active_kc and cluster_mode == 'kubeconfig') %}
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="node-dot {{ 'ok' if is_active else '' }}" style="flex-shrink:0"></div>
+            <span style="font-weight:600;font-family:var(--mono)">{{ c.name }}</span>
+          </div>
+        </td>
+        <td><span class="badge blue">kubeconfig</span></td>
+        <td>
+          {% if is_active %}
+          <span class="status-pill run"><div class="sp-dot"></div>Active</span>
+          {% else %}
+          <span class="status-pill" style="background:rgba(71,85,105,.2);color:var(--muted)"><div class="sp-dot" style="background:var(--faint)"></div>Saved</span>
+          {% endif %}
+        </td>
+        <td style="color:var(--muted);font-size:11px">{{ c.updated_at[:16] if c.updated_at else '—' }}</td>
+        <td style="text-align:right">
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            {% if not is_active %}
+            <form action="/clusters/{{ c.name }}/activate" method="post">
+              <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token','') }}">
+              <button type="submit" class="btn btn-sm">
+                <i class="ti ti-plug"></i> Activate
+              </button>
+            </form>
+            {% endif %}
+            <form action="/clusters/{{ c.name }}/delete" method="post"
+                  onsubmit="return confirm('Delete cluster config \'{{ c.name }}\'?')">
+              <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token','') }}">
+              <button type="submit" class="btn btn-sm danger">
+                <i class="ti ti-trash"></i>
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="5" style="text-align:center;padding:40px;color:var(--faint)">
+        <i class="ti ti-topology-star-3" style="font-size:32px;display:block;margin-bottom:12px"></i>
+        No clusters saved yet. Upload a kubeconfig above.
+      </td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

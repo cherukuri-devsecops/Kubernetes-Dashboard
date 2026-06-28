@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div class="breadcrumb"><a href="/config">Config &amp; Secrets</a> › {{ cm.metadata.namespace }}</div>
+  <h1>{{ cm.metadata.name }}</h1>
+  <div class="sub">{{ cm.metadata.namespace }} / configmap</div>
+  <div class="actions">
+    {% if can('update', 'configmaps', cm.metadata.namespace) %}
+    <button class="btn" onclick="openEditor('ConfigMap','{{ cm.metadata.namespace }}','{{ cm.metadata.name }}')"
+            title="Edit YAML in resource editor">
+      <i class="ti ti-code"></i> Edit YAML
+    </button>
+    {% endif %}
+    {% if can('delete', 'configmaps', cm.metadata.namespace) %}
+    <button class="btn danger"
+            onclick="deleteResource('ConfigMap','{{ cm.metadata.namespace }}','{{ cm.metadata.name }}','/config')">
+      <i class="ti ti-trash"></i> Delete
+    </button>
+    {% else %}
+    <span class="btn danger rbac-denied" title="You do not have permission to delete configmaps">
+      <i class="ti ti-trash"></i> Delete
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Meta grid -->
+<div class="meta-grid">
+  <div class="meta-cell">
+    <div class="meta-key">Namespace</div>
+    <div class="meta-val">{{ cm.metadata.namespace }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Data Keys</div>
+    <div class="meta-val">{{ cm.data|length if cm.data else 0 }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Binary Data Keys</div>
+    <div class="meta-val">{{ cm.binary_data|length if cm.binary_data else 0 }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Age</div>
+    <div class="meta-val">{{ age(cm.metadata.creation_timestamp) }}</div>
+  </div>
+</div>
+
+<!-- Labels -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:20px;font-size:12px">
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Labels</div>
+    {% if cm.metadata.labels %}
+    <div class="tags">{% for k,v in cm.metadata.labels.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+</div>
+
+<!-- Data -->
+{% if cm.data %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Data <span class="cnt">{{ cm.data|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:25%;min-width:140px">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in cm.data.items() %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:12px;color:var(--accent);vertical-align:top;word-break:break-all">{{ k }}</td>
+    <td>
+      <pre style="margin:0;font-family:var(--mono);font-size:11px;color:var(--fg);white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto;background:var(--bg-2,#11141a);padding:6px 8px;border-radius:4px;border:1px solid var(--border,#252830)">{{ v }}</pre>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Binary Data -->
+{% if cm.binary_data %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Binary Data Keys <span class="cnt">{{ cm.binary_data|length }}</span></div>
+</div>
+<div style="margin-bottom:20px">
+  <div class="tags">{% for k in cm.binary_data.keys() %}<span class="tag"><i class="ti ti-binary" style="margin-right:4px"></i>{{ k }}</span>{% endfor %}</div>
+</div>
+{% endif %}
+
+<!-- Annotations -->
+{% if cm.metadata.annotations %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Annotations <span class="cnt">{{ cm.metadata.annotations|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:35%">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in cm.metadata.annotations.items() %}
+  {% if 'last-applied' not in k %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--muted);vertical-align:top">{{ k }}</td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:pre-wrap;word-break:break-all">{{ v }}</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Manifest YAML -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Manifest</div>
+</div>
+<details style="margin-bottom:24px;border:1px solid var(--border,#252830);border-radius:6px;background:var(--bg-2,#11141a)">
+  <summary style="padding:10px 14px;cursor:pointer;font-size:13px;color:var(--muted);user-select:none">
+    <i class="ti ti-code"></i> Show YAML
+    <button type="button" id="copyYaml" class="btn" style="float:right;padding:2px 10px;font-size:11px">
+      <i class="ti ti-copy"></i> Copy
+    </button>
+  </summary>
+  <pre id="manifestYaml" style="margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--fg);max-height:600px">{{ manifest_yaml }}</pre>
+</details>
+
+<script>
+const cy = document.getElementById('copyYaml');
+if (cy) cy.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const txt = document.getElementById('manifestYaml').innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const o = cy.innerHTML; cy.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => cy.innerHTML = o, 1200);
+  });
+});
+</script>
+{% endblock %}

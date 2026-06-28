@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Audit Log
+    <span style="font-size:14px;font-weight:400;color:var(--faint);margin-left:8px">{{ rows|length }} entries</span>
+  </h1>
+</div>
+
+<div style="overflow:auto;border:1px solid var(--border,#252830);border-radius:6px">
+<table class="datatable" style="width:100%;border-collapse:collapse;font-size:13px">
+  <thead><tr style="background:var(--bg-2,#11141a)">
+    {% for h in ['When','User','Action','Target','Details'] %}
+    <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border,#252830);
+               color:var(--faint);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.4px">{{ h }}</th>
+    {% endfor %}
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr style="border-bottom:1px solid var(--border,#1a1d24)">
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace;color:var(--faint);white-space:nowrap">
+        {{ r.ts.strftime('%Y-%m-%d %H:%M:%S') if r.ts else '—' }}
+      </td>
+      <td style="padding:8px 12px">{{ r.user_email or '—' }}</td>
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace"><strong>{{ r.action }}</strong></td>
+      <td style="padding:8px 12px;font-family:ui-monospace,Menlo,monospace">{{ r.target or '' }}</td>
+      <td style="padding:8px 12px;color:var(--faint);font-family:ui-monospace,Menlo,monospace;font-size:11px">{{ r.details or '' }}</td>
+    </tr>
+    {% endfor %}
+    {% if not rows %}
+    <tr><td colspan="5" style="padding:30px;text-align:center;color:var(--faint)">No audit entries yet.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

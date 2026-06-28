@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title"><i class="ti ti-users" style="color:var(--teal)"></i> User Management</h1>
+  <p class="page-sub">Users who have stored kubeconfigs in this dashboard instance.</p>
+</div>
+
+{% if not users %}
+<div class="card" style="text-align:center;padding:48px">
+  <i class="ti ti-users-off" style="font-size:48px;color:var(--faint)"></i>
+  <p style="color:var(--faint);margin-top:12px">No users found. Users appear here once they upload a kubeconfig.</p>
+</div>
+{% endif %}
+
+{% for u in users %}
+{% set outer_loop = loop %}
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+    <div style="width:40px;height:40px;border-radius:50%;background:var(--teal);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0">
+      {{ (u.user_email[:2] | upper) }}
+    </div>
+    <div>
+      <div style="font-weight:600">{{ u.user_email }}
+        {% if u.is_self %}<span class="badge badge-info" style="margin-left:6px">You</span>{% endif %}
+      </div>
+      <div style="font-size:12px;color:var(--faint)">{{ u.kc_count }} kubeconfig{{ 's' if u.kc_count != 1 }}</div>
+    </div>
+  </div>
+
+  {% if u.kubeconfigs %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Kubeconfig Name</th>
+        <th>Last Updated</th>
+        <th style="width:80px">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for kc in u.kubeconfigs %}
+      <tr id="kc-row-{{ loop.index }}-{{ outer_loop.index }}">
+        <td><i class="ti ti-file-code" style="color:var(--teal);margin-right:6px"></i>{{ kc.name }}</td>
+        <td style="color:var(--faint)">{{ kc.updated_at }}</td>
+        <td>
+          <button class="btn btn-sm btn-danger"
+                  onclick="deleteKubeconfig('{{ u.user_email }}', '{{ kc.name }}', this)"
+                  title="Delete this kubeconfig">
+            <i class="ti ti-trash"></i>
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:var(--faint);font-size:13px;padding:8px 0">No kubeconfigs stored.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+<script>
+const csrf = document.querySelector('meta[name="csrf-token"]').content;
+
+async function deleteKubeconfig(email, name, btn) {
+  if (!confirm(`Delete kubeconfig "${name}" for ${email}?`)) return;
+  const row = btn.closest('tr');
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/users/${encodeURIComponent(email)}/kubeconfigs/${encodeURIComponent(name)}/delete`, {
+      method: 'POST',
+      headers: {'X-CSRF-Token': csrf},
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      row.style.opacity = '0.3';
+      setTimeout(() => row.remove(), 400);
+    } else {
+      alert('Error: ' + (data.error || 'unknown'));
+      btn.disabled = false;
+    }
+  } catch(e) {
+    alert('Request failed: ' + e);
+    btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}

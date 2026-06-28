@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% set counts = namespace(err=0, warn=0, info=0) %}
+{% for r in rows %}
+  {% if r.severity == 'error' %}{% set counts.err = counts.err + 1 %}
+  {% elif r.severity == 'warn' %}{% set counts.warn = counts.warn + 1 %}
+  {% else %}{% set counts.info = counts.info + 1 %}
+  {% endif %}
+{% endfor %}
+
+<div class="page-head">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h1>Log Archive
+        <span id="rowCountLabel" style="font-size:14px;font-weight:400;color:var(--faint);margin-left:8px">
+          {{ rows|length }} lines · last {{ hours }}h
+        </span>
+      </h1>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <span class="badge err"><i class="ti ti-alert-circle"></i> {{ counts.err }} error{% if counts.err != 1 %}s{% endif %}</span>
+        <span class="badge warn"><i class="ti ti-alert-triangle"></i> {{ counts.warn }} warn{% if counts.warn != 1 %}s{% endif %}</span>
+        <span class="badge info"><i class="ti ti-info-circle"></i> {{ counts.info }} info</span>
+      </div>
+    </div>
+    <button class="btn" onclick="exportCsv()" title="Download all rows as CSV">
+      <i class="ti ti-download"></i> Export CSV
+    </button>
+  </div>
+</div>
+
+<!-- Sticky filter bar -->
+<div style="position:sticky;top:0;z-index:20;background:var(--bg,#0d0f14);padding:10px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px">
+  <form method="get" action="/logs/archive" class="toolbar" style="margin:0;gap:12px;flex-wrap:wrap">
+    <label>Namespace
+      <select name="ns">
+        <option value="">all</option>
+        {% for n in namespaces %}
+        <option value="{{ n }}" {{ 'selected' if n == selected_ns }}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Pod
+      <input type="text" name="pod" value="{{ selected_pod }}" placeholder="pod name" style="width:160px">
+    </label>
+    <label>Severity
+      <select name="severity">
+        <option value="">all</option>
+        <option value="error" {{ 'selected' if selected_severity == 'error' }}>error</option>
+        <option value="warn"  {{ 'selected' if selected_severity == 'warn'  }}>warn</option>
+        <option value="info"  {{ 'selected' if selected_severity == 'info'  }}>info</option>
+      </select>
+    </label>
+    <label>Search
+      <input type="text" name="q" value="{{ search }}" placeholder="contains…" style="width:200px">
+    </label>
+    <label>Range
+      <select name="hours">
+        {% for h in [1,6,24,72,168] %}
+        <option value="{{ h }}" {{ 'selected' if h == hours }}>{{ h }}h</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn primary" type="submit"><i class="ti ti-filter"></i> Apply</button>
+  </form>
+</div>
+
+<!-- Sort controls + pagination count -->
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+  <div style="display:flex;gap:4px;align-items:center">
+    <span style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-right:4px">Sort</span>
+    <button class="btn btn-sm la-sort-btn active" id="sortBtn-ts"       onclick="laSort('ts')">Time<span class="la-arrow"> ▼</span></button>
+    <button class="btn btn-sm la-sort-btn"        id="sortBtn-severity" onclick="laSort('severity')">Severity<span class="la-arrow"></span></button>
+    <button class="btn btn-sm la-sort-btn"        id="sortBtn-ns"       onclick="laSort('ns')">Namespace<span class="la-arrow"></span></button>
+  </div>
+  <span id="laPaginationInfo" style="font-size:12px;color:var(--faint)"></span>
+</div>
+
+<!-- Log table -->
+<div style="overflow:auto;border:1px solid var(--border,#252830);border-radius:6px;font-family:Menlo,monospace;font-size:12px">
+  <!-- Column header row -->
+  <div style="display:flex;gap:10px;padding:5px 12px;border-bottom:1px solid var(--border2);background:var(--card,#13151c);font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">
+    <span style="min-width:160px;flex-shrink:0">Time</span>
+    <span style="min-width:50px;flex-shrink:0">Level</span>
+    <span style="min-width:140px;flex-shrink:0">Source</span>
+    <span style="min-width:90px;flex-shrink:0">Container</span>
+    <span style="flex:1">Message</span>
+    <span style="width:20px;flex-shrink:0"></span>
+  </div>
+
+  <div id="laRows">
+  {% for r in rows %}
+  <div class="la-row la-sev-{{ r.severity or 'info' }}"
+       data-ts="{{ r.ts.isoformat() if r.ts else '' }}"
+       data-severity="{{ r.severity or 'info' }}"
+       data-ns="{{ r.ns or '' }}"
+       data-pod="{{ r.pod_name or '' }}"
+       data-container="{{ r.container or '' }}"
+       data-line="{{ r.line }}">
+    <span class="la-col-ts">{{ r.ts.strftime('%Y-%m-%d %H:%M:%S') if r.ts else '' }}</span>
+    <span class="badge {{ 'err' if r.severity=='error' else 'warn' if r.severity=='warn' else 'info' }} la-col-sev">{{ r.severity or 'info' }}</span>
+    <span class="la-col-src">{{ r.ns }}/{{ r.pod_name }}</span>
+    <span class="la-col-ctr">{{ r.container or '' }}</span>
+    <span class="la-col-msg" onclick="laToggle(this)" title="Click to expand / collapse">
+      <span class="la-preview">{{ r.line[:160] }}{% if r.line|length > 160 %}<span style="color:var(--muted)"> ···</span>{% endif %}</span>
+      {% if r.line|length > 160 %}
+      <span class="la-full">{{ r.line }}</span>
+      {% endif %}
+    </span>
+    <button class="la-copy" title="Copy line" onclick="laCopy(this)"><i class="ti ti-copy"></i></button>
+  </div>
+  {% endfor %}
+  </div>
+
+  {% if not rows %}
+  <div style="padding:30px;text-align:center;color:var(--faint)">
+    No archived log lines in this range. The poller samples every 60s and keeps error, warn, and info lines.
+  </div>
+  {% endif %}
+</div>
+
+{% if rows %}
+<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px;font-size:13px">
+  <button class="btn btn-sm" id="laPrev" onclick="laPage(-1)" disabled><i class="ti ti-chevron-left"></i> Prev</button>
+  <span id="laPageLabel" style="color:var(--muted);min-width:110px;text-align:center"></span>
+  <button class="btn btn-sm" id="laNext" onclick="laPage(1)">Next <i class="ti ti-chevron-right"></i></button>
+</div>
+{% endif %}
+
+<style>
+.la-row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border, #1a1d24);
+  align-items: flex-start;
+  position: relative;
+}
+.la-row.la-sev-error { background: rgba(244,63,94,.045); }
+.la-row.la-sev-warn  { background: rgba(245,158,11,.035); }
+.la-row:hover { background: rgba(255,255,255,.03) !important; }
+.la-row.la-sev-error:hover { background: rgba(244,63,94,.10) !important; }
+.la-row.la-sev-warn:hover  { background: rgba(245,158,11,.09) !important; }
+
+.la-col-ts  { color:var(--faint); white-space:nowrap; min-width:160px; flex-shrink:0; padding-top:1px; }
+.la-col-sev { min-width:50px; text-align:center; flex-shrink:0; }
+.la-col-src { color:var(--faint); min-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-shrink:0; }
+.la-col-ctr { color:var(--faint); min-width:90px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-shrink:0; }
+.la-col-msg { color:var(--fg); word-break:break-word; flex:1; cursor:pointer; }
+.la-full    { display:none; white-space:pre-wrap; }
+
+.la-copy {
+  opacity: 0;
+  transition: opacity .15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 1px 3px;
+  flex-shrink: 0;
+  font-size: 13px;
+  border-radius: 4px;
+}
+.la-copy:hover { background: var(--border2); color: var(--teal); }
+.la-row:hover .la-copy { opacity: 1; }
+
+.la-sort-btn.active { color: var(--teal); border-color: var(--teal); }
+</style>
+
+<script>
+(function () {
+  const PAGE = 50;
+  let _page = 0;
+  let _col  = 'ts';
+  let _dir  = -1;
+  const SEV = { error: 0, warn: 1, info: 2 };
+
+  function rows() {
+    return Array.from(document.querySelectorAll('#laRows .la-row'));
+  }
+
+  function render() {
+    const all   = rows();
+    const total = all.length;
+    const pages = Math.max(1, Math.ceil(total / PAGE));
+    _page = Math.min(_page, pages - 1);
+
+    all.forEach((r, i) => {
+      r.style.display = (i >= _page * PAGE && i < (_page + 1) * PAGE) ? '' : 'none';
+    });
+
+    const from = total ? _page * PAGE + 1 : 0;
+    const to   = Math.min((_page + 1) * PAGE, total);
+    const info  = document.getElementById('laPaginationInfo');
+    const label = document.getElementById('laPageLabel');
+    const prev  = document.getElementById('laPrev');
+    const next  = document.getElementById('laNext');
+    if (info)  info.textContent  = total ? `Showing ${from}–${to} of ${total}` : '';
+    if (label) label.textContent = total ? `Page ${_page + 1} / ${pages}` : '';
+    if (prev)  prev.disabled = _page === 0;
+    if (next)  next.disabled = _page >= pages - 1;
+  }
+
+  window.laPage = function (delta) {
+    _page += delta;
+    render();
+    document.getElementById('laRows')
+      .closest('div[style]')
+      .scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  window.laSort = function (col) {
+    const container = document.getElementById('laRows');
+    if (_col === col) { _dir *= -1; }
+    else { _col = col; _dir = col === 'ts' ? -1 : 1; }
+
+    rows().sort((a, b) => {
+      const va = a.dataset[col] || '';
+      const vb = b.dataset[col] || '';
+      if (col === 'severity') {
+        return _dir * ((SEV[va] ?? 99) - (SEV[vb] ?? 99));
+      }
+      return _dir * va.localeCompare(vb);
+    }).forEach(r => container.appendChild(r));
+
+    document.querySelectorAll('.la-sort-btn').forEach(btn => {
+      btn.classList.remove('active');
+      const a = btn.querySelector('.la-arrow');
+      if (a) a.textContent = '';
+    });
+    const active = document.getElementById('sortBtn-' + col);
+    if (active) {
+      active.classList.add('active');
+      const a = active.querySelector('.la-arrow');
+      if (a) a.textContent = _dir === 1 ? ' ▲' : ' ▼';
+    }
+
+    _page = 0;
+    render();
+  };
+
+  window.laToggle = function (el) {
+    const full    = el.querySelector('.la-full');
+    const preview = el.querySelector('.la-preview');
+    if (!full) return;
+    const open = full.style.display === 'block';
+    full.style.display    = open ? 'none' : 'block';
+    preview.style.display = open ? '' : 'none';
+  };
+
+  window.laCopy = function (btn) {
+    const line = btn.closest('.la-row')?.dataset.line || '';
+    navigator.clipboard.writeText(line).then(() => {
+      const ic = btn.querySelector('i');
+      if (ic) ic.className = 'ti ti-check';
+      btn.style.color = 'var(--green)';
+      setTimeout(() => {
+        if (ic) ic.className = 'ti ti-copy';
+        btn.style.color = '';
+      }, 1500);
+    });
+  };
+
+  window.exportCsv = function () {
+    const all   = rows();
+    const lines = [['timestamp','severity','namespace','pod','container','message'].join(',')];
+    all.forEach(r => {
+      const d = r.dataset;
+      lines.push([
+        d.ts        || '',
+        d.severity  || '',
+        d.ns        || '',
+        d.pod       || '',
+        d.container || '',
+        '"' + (d.line || '').replace(/"/g, '""') + '"'
+      ].join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'log-archive-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  document.addEventListener('DOMContentLoaded', () => laSort('ts'));
+})();
+</script>
+{% endblock %}

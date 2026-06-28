@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Jobs &amp; CronJobs</h1></div>
+
+<!-- Jobs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Jobs <span class="cnt">{{ jobs|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Status</th><th>Completions</th><th>Duration</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+  {% set done = (j.status.succeeded or 0) > 0 %}
+  {% set failed = (j.status.failed or 0) > 0 %}
+  <tr class="{{ 'tr-err' if failed else '' }}">
+    <td style="color:var(--faint)">{{ j.metadata.namespace }}</td>
+    <td><a class="row-link" href="/jobs/{{ j.metadata.namespace }}/{{ j.metadata.name }}"><strong>{{ j.metadata.name }}</strong></a></td>
+    <td>
+      {% if done %}<span class="badge ok">Complete</span>
+      {% elif failed %}<span class="badge err">Failed</span>
+      {% else %}<span class="badge warn">Running</span>{% endif %}
+    </td>
+    <td>{{ j.status.succeeded or 0 }}/{{ j.spec.completions or 1 }}</td>
+    <td style="color:var(--faint);font-size:12px">
+      {% if j.status.start_time and j.status.completion_time %}
+        {{ age(j.status.completion_time) }}
+      {% else %}—{% endif %}
+    </td>
+    <td style="color:var(--faint)">{{ age(j.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty"><i class="ti ti-hammer"></i>No Jobs</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- CronJobs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">CronJobs <span class="cnt">{{ crons|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Schedule</th><th>Suspended</th><th>Last run</th><th>Active</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for c in crons %}
+  <tr>
+    <td style="color:var(--faint)">{{ c.metadata.namespace }}</td>
+    <td><a class="row-link" href="/cronjobs/{{ c.metadata.namespace }}/{{ c.metadata.name }}"><strong>{{ c.metadata.name }}</strong></a></td>
+    <td style="font-family:var(--mono);color:var(--accent);font-size:12px">{{ c.spec.schedule }}</td>
+    <td>{% if c.spec.suspend %}<span class="badge warn">Suspended</span>{% else %}<span class="badge ok">Active</span>{% endif %}</td>
+    <td style="color:var(--faint);font-size:12px">
+      {{ age(c.status.last_schedule_time) + ' ago' if c.status.last_schedule_time else '—' }}
+    </td>
+    <td>{{ c.status.active|length if c.status.active else 0 }}</td>
+    <td style="color:var(--faint)">{{ age(c.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-clock"></i>No CronJobs</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

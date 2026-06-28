@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Deployments <span style="font-size:14px;font-weight:400;color:var(--faint)">{{ deployments|length }}</span></h1>
+  {% if can('create', 'deployments') %}
+  <div class="actions">
+    <button class="btn" onclick="openEditor()" title="Create new Deployment">
+      <i class="ti ti-plus"></i> New
+    </button>
+  </div>
+  {% endif %}
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Namespace</th><th>Name</th><th>Ready</th><th>Replicas</th><th>Up-to-date</th><th>Available</th><th>Age</th><th style="text-align:right">Actions</th></tr></thead>
+    <tbody>
+    {% for d in deployments %}
+    {% set desired = d.spec.replicas or 0 %}
+    {% set ready   = d.status.ready_replicas or 0 %}
+    {% set healthy = ready == desired and desired > 0 %}
+    <tr class="{{ '' if healthy else 'tr-warn' }}">
+      <td style="color:var(--faint)">{{ d.metadata.namespace }}</td>
+      <td><a class="row-link" href="/deployments/{{ d.metadata.namespace }}/{{ d.metadata.name }}"><strong>{{ d.metadata.name }}</strong></a></td>
+      <td>
+        <span class="dot {{ 'ok' if healthy else 'warn' }}"></span>
+        <span class="ready"><span class="r">{{ ready }}</span><span class="s">/{{ desired }}</span></span>
+      </td>
+      <td>
+        <div class="pbar">
+          <div class="pbar-fill {{ '' if healthy else 'warn' }}"
+               style="width:{{ (ready/desired*100)|round|int if desired else 0 }}%"></div>
+        </div>
+      </td>
+      <td>{{ d.status.updated_replicas or 0 }}</td>
+      <td>{{ d.status.available_replicas or 0 }}</td>
+      <td style="color:var(--faint)">{{ age(d.metadata.creation_timestamp) }}</td>
+      <td style="text-align:right">
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          {% if can('update', 'deployments', d.metadata.namespace) %}
+          <button class="btn btn-sm" title="Edit YAML"
+                  onclick="openEditor('Deployment','{{ d.metadata.namespace }}','{{ d.metadata.name }}')">
+            <i class="ti ti-code"></i>
+          </button>
+          {% endif %}
+          {% if can('delete', 'deployments', d.metadata.namespace) %}
+          <button class="btn btn-sm danger" title="Delete deployment"
+                  onclick="deleteResource('Deployment','{{ d.metadata.namespace }}','{{ d.metadata.name }}','/deployments')">
+            <i class="ti ti-trash"></i>
+          </button>
+          {% else %}
+          <span class="btn btn-sm danger rbac-denied" title="Insufficient permissions"><i class="ti ti-trash"></i></span>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

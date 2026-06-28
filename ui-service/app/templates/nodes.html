@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Nodes <span style="font-size:14px;font-weight:400;color:var(--faint)">{{ nodes|length }}</span></h1></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Name</th><th>Status</th><th>Roles</th><th>CPU</th><th>Mem</th><th>Kubelet</th><th>OS</th><th>Age</th></tr></thead>
+    <tbody>
+    {% for n in nodes %}
+    {% set ready = node_ready(n) %}
+    <tr>
+      <td><a class="row-link" href="/nodes/{{ n.metadata.name }}">{{ n.metadata.name }}</a></td>
+      <td><span class="dot {{ 'ok' if ready else 'err' }}"></span>{{ 'Ready' if ready else 'NotReady' }}</td>
+      <td><span class="badge gray">{{ node_roles(n) }}</span></td>
+      <td>{{ n.status.capacity.get('cpu','—') }}</td>
+      <td>{{ n.status.capacity.get('memory','—') }}</td>
+      <td style="color:var(--faint)">{{ n.status.node_info.kubelet_version if n.status.node_info else '—' }}</td>
+      <td style="color:var(--faint)">{{ n.status.node_info.os_image if n.status.node_info else '—' }}</td>
+      <td style="color:var(--faint)">{{ age(n.metadata.creation_timestamp) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

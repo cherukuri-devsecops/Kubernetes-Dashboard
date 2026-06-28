@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Events <span style="font-size:14px;font-weight:400;color:var(--faint)">{{ events|length }}</span></h1>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Type</th><th>Namespace</th><th>Object</th><th>Reason</th><th>Message</th><th>Count</th><th>Last seen</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+    <tr class="{{ 'tr-err' if e.type == 'Warning' else '' }}">
+      <td><span class="ev-type {{ e.type }}">{{ e.type }}</span></td>
+      <td style="color:var(--faint);font-size:12px">{{ e.metadata.namespace }}</td>
+      <td style="font-size:12px">
+        <span style="color:var(--faint)">{{ e.involved_object.kind }}/</span>
+        {% if e.involved_object.kind == 'Pod' %}
+        <a href="/pods/{{ e.metadata.namespace }}/{{ e.involved_object.name }}">{{ e.involved_object.name }}</a>
+        {% else %}
+        {{ e.involved_object.name }}
+        {% endif %}
+      </td>
+      <td><strong style="font-size:12px">{{ e.reason }}</strong></td>
+      <td style="color:var(--muted);font-size:12px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="{{ e.message }}">{{ e.message }}</td>
+      <td style="color:var(--faint)">{{ e.count }}</td>
+      <td style="color:var(--faint);font-size:12px">{{ age(e.last_timestamp) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

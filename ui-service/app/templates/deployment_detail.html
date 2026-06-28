@@ -1,0 +1,627 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div class="breadcrumb"><a href="/deployments">Deployments</a> › {{ dep.metadata.namespace }}</div>
+  <h1>{{ dep.metadata.name }}</h1>
+  <div class="sub">{{ dep.metadata.namespace }} / deployment</div>
+  <div class="actions">
+    {% if can('update', 'deployments', dep.metadata.namespace) %}
+    <button class="btn" onclick="openEditor('Deployment','{{ dep.metadata.namespace }}','{{ dep.metadata.name }}')"
+            title="Edit YAML in resource editor">
+      <i class="ti ti-code"></i> Edit YAML
+    </button>
+    {% endif %}
+    {% if can('delete', 'deployments', dep.metadata.namespace) %}
+    <button class="btn danger"
+            onclick="deleteResource('Deployment','{{ dep.metadata.namespace }}','{{ dep.metadata.name }}','/deployments')">
+      <i class="ti ti-trash"></i> Delete
+    </button>
+    {% else %}
+    <span class="btn danger rbac-denied" title="You do not have permission to delete deployments">
+      <i class="ti ti-trash"></i> Delete
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+{% set desired  = dep.spec.replicas or 0 %}
+{% set ready    = dep.status.ready_replicas or 0 %}
+{% set updated  = dep.status.updated_replicas or 0 %}
+{% set available = dep.status.available_replicas or 0 %}
+{% set unavail  = dep.status.unavailable_replicas or 0 %}
+{% set healthy  = ready == desired and desired > 0 %}
+
+<!-- Meta grid -->
+<div class="meta-grid">
+  <div class="meta-cell">
+    <div class="meta-key">Status</div>
+    <div class="meta-val">
+      <span class="dot {{ 'ok' if healthy else 'warn' }}"></span>
+      {{ 'Healthy' if healthy else 'Degraded' }}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Ready</div>
+    <div class="meta-val ready"><span class="r">{{ ready }}</span><span class="s">/{{ desired }}</span></div>
+  </div>
+  <div class="meta-cell" style="grid-column:span 2">
+    <div class="meta-key">Replicas</div>
+    <div class="meta-val" style="display:flex;align-items:center;gap:8px">
+      {% if can('update', 'deployments', dep.metadata.namespace) %}
+      <button id="scaleDown" class="btn btn-sm" title="Decrease replicas" style="padding:2px 10px;font-size:16px;line-height:1">−</button>
+      <span id="replicaCount" style="font-size:18px;font-weight:700;min-width:32px;text-align:center">{{ desired }}</span>
+      <button id="scaleUp" class="btn btn-sm" title="Increase replicas" style="padding:2px 10px;font-size:16px;line-height:1">+</button>
+      <button id="scaleApply" class="btn btn-sm" style="display:none;margin-left:4px">Apply</button>
+      <button id="scaleCancel" class="btn btn-sm" style="display:none">Cancel</button>
+      <span id="scaleMsg" style="font-size:12px;color:var(--faint);margin-left:6px"></span>
+      {% else %}
+      <span style="font-size:18px;font-weight:700">{{ desired }}</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Up-to-date</div>
+    <div class="meta-val">{{ updated }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Available</div>
+    <div class="meta-val">{{ available }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Unavailable</div>
+    <div class="meta-val">{{ unavail if unavail else '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Strategy</div>
+    <div class="meta-val">{{ (dep.spec.strategy.type if dep.spec and dep.spec.strategy else None) or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Min Ready</div>
+    <div class="meta-val">{{ (dep.spec.min_ready_seconds if dep.spec else None) or '0' }}s</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Revision History</div>
+    <div class="meta-val">{{ (dep.spec.revision_history_limit if dep.spec else None) or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Age</div>
+    <div class="meta-val">{{ age(dep.metadata.creation_timestamp) }}</div>
+  </div>
+</div>
+
+<!-- Selector / Labels -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:20px;font-size:12px">
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Selector</div>
+    {% set sel = dep.spec.selector.match_labels if dep.spec and dep.spec.selector else {} %}
+    {% if sel %}
+    <div class="tags">{% for k,v in sel.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Labels</div>
+    {% if dep.metadata.labels %}
+    <div class="tags">{% for k,v in dep.metadata.labels.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+</div>
+
+<!-- Pod Metrics Graphs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title" style="display:flex;align-items:center;gap:8px">
+    <i class="ti ti-chart-line"></i> Pod Metrics
+    <span style="font-size:11px;color:var(--faint);font-weight:400">· Prometheus</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+      <select id="podGraphRange"
+              style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);
+                     border-radius:5px;padding:2px 8px;font-size:11px;color:var(--faint);cursor:pointer"
+              onchange="loadPodGraphs()">
+        <option value="15m">15 min</option>
+        <option value="30m" selected>30 min</option>
+        <option value="1h">1 hour</option>
+        <option value="3h">3 hours</option>
+      </select>
+      <span id="podGraphStatus" style="font-size:11px;color:var(--faint)"></span>
+    </span>
+  </div>
+</div>
+<div id="podGraphsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-bottom:24px">
+  {% for panel in [
+      ('chartPodCpuCores', 'ti-cpu',          'CPU Usage (cores)',  'var(--accent,#5b8dee)'),
+      ('chartPodCpuPct',   'ti-cpu',           'CPU Utilization %', 'var(--warn,#f59e0b)'),
+      ('chartPodMemBytes', 'ti-device-floppy', 'Memory Usage',      'var(--teal,#2dd4bf)'),
+      ('chartPodMemPct',   'ti-device-floppy', 'Memory Utilization %','var(--purple,#a78bfa)')
+  ] %}
+  <div style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);
+              border-radius:8px;padding:14px 16px">
+    <div style="font-size:12px;color:var(--faint);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+      <i class="ti {{ panel[1] }}" style="font-size:13px"></i>
+      {{ panel[2] }}
+    </div>
+    <div style="height:160px;position:relative">
+      <canvas id="{{ panel[0] }}"></canvas>
+      <div id="{{ panel[0] }}-empty"
+           style="display:none;position:absolute;inset:0;align-items:center;
+                  justify-content:center;flex-direction:column;gap:4px;color:var(--faint)">
+        <i class="ti ti-chart-line-off" style="font-size:22px;opacity:.4"></i>
+        <span style="font-size:11px">No data</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+(function () {
+  const NS  = {{ dep.metadata.namespace | tojson }};
+  const DEP = {{ dep.metadata.name | tojson }};
+
+  const POD_COLORS = [
+    '#5b8dee','#2dd4bf','#f59e0b','#f43f5e',
+    '#a78bfa','#34d399','#fb923c','#60a5fa',
+  ];
+  const _gc  = '#1e2028';
+  const _tc  = '#6b7280';
+  const _tf  = { size: 10 };
+  const _charts = {};
+
+  function tsLabel(unix) {
+    const d = new Date(unix * 1000);
+    return d.getHours().toString().padStart(2,'0') + ':' +
+           d.getMinutes().toString().padStart(2,'0');
+  }
+
+  function fmtBytes(v) {
+    if (v >= 1073741824) return (v / 1073741824).toFixed(1) + ' GiB';
+    if (v >= 1048576)    return (v / 1048576).toFixed(0) + ' MiB';
+    return (v / 1024).toFixed(0) + ' KiB';
+  }
+
+  function buildChart(id, labels, datasets, yFmt) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (_charts[id]) { _charts[id].destroy(); }
+    _charts[id] = new Chart(el, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            display: datasets.length > 1,
+            labels: { color: _tc, font: _tf, boxWidth: 8, padding: 6 }
+          },
+          tooltip: { callbacks: {
+            label: c => ` ${c.dataset.label}: ${yFmt(c.raw)}`
+          }}
+        },
+        scales: {
+          x: { grid: { color: _gc }, ticks: { color: _tc, font: _tf, maxTicksLimit: 8 } },
+          y: { grid: { color: _gc }, ticks: { color: _tc, font: _tf,
+               callback: v => yFmt(v) }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  function showEmpty(id) {
+    const canvas = document.getElementById(id);
+    const empty  = document.getElementById(id + '-empty');
+    if (canvas) canvas.style.display = 'none';
+    if (empty)  empty.style.display = 'flex';
+  }
+
+  function hideEmpty(id) {
+    const canvas = document.getElementById(id);
+    const empty  = document.getElementById(id + '-empty');
+    if (canvas) canvas.style.display = '';
+    if (empty)  empty.style.display = 'none';
+  }
+
+  function seriesDatasets(results, valFn) {
+    return results.map((r, i) => {
+      const pod = (r.metric && r.metric.pod) || `pod-${i}`;
+      const shortName = pod.replace(DEP + '-', '');
+      return {
+        label: shortName,
+        data: r.values.map(([, v]) => parseFloat(v) || 0),
+        borderColor: POD_COLORS[i % POD_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+      };
+    });
+  }
+
+  function buildLabels(results) {
+    if (!results.length || !results[0].values.length) return [];
+    return results[0].values.map(([ts]) => tsLabel(ts));
+  }
+
+  function buildPctDatasets(baseResults, limitResults) {
+    const limMap = {};
+    limitResults.forEach(r => {
+      const pod = r.metric && r.metric.pod;
+      if (pod) {
+        limMap[pod] = r.values.map(([, v]) => parseFloat(v) || 0);
+      }
+    });
+    return baseResults.map((r, i) => {
+      const pod = (r.metric && r.metric.pod) || `pod-${i}`;
+      const shortName = pod.replace(DEP + '-', '');
+      const lim = limMap[pod];
+      const data = r.values.map(([, v], j) => {
+        const base = parseFloat(v) || 0;
+        const cap  = lim ? (lim[j] || 0) : 0;
+        return cap > 0 ? parseFloat((base / cap * 100).toFixed(1)) : null;
+      });
+      return {
+        label: shortName,
+        data,
+        borderColor: POD_COLORS[i % POD_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+      };
+    });
+  }
+
+  window.loadPodGraphs = function () {
+    const rng = document.getElementById('podGraphRange').value;
+    const st  = document.getElementById('podGraphStatus');
+    if (st) st.textContent = 'Loading…';
+
+    fetch(`/api/metrics/pod-graphs?namespace=${encodeURIComponent(NS)}&deployment=${encodeURIComponent(DEP)}&range=${rng}`)
+      .then(r => r.json())
+      .then(d => {
+        if (st) st.textContent = '';
+
+        const cpuR = d.cpu_cores || [];
+        const memR = d.mem_bytes || [];
+        const cpuL = d.cpu_limit || [];
+        const memL = d.mem_limit || [];
+
+        // CPU Cores
+        if (cpuR.length) {
+          hideEmpty('chartPodCpuCores');
+          buildChart('chartPodCpuCores',
+            buildLabels(cpuR),
+            seriesDatasets(cpuR),
+            v => v < 0.001 ? (v * 1e6).toFixed(0) + ' μ' : v < 1 ? (v * 1000).toFixed(1) + 'm' : v.toFixed(3)
+          );
+        } else { showEmpty('chartPodCpuCores'); }
+
+        // CPU %
+        const cpuPctDs = buildPctDatasets(cpuR, cpuL);
+        const hasCpuPct = cpuPctDs.some(ds => ds.data.some(v => v !== null));
+        if (hasCpuPct) {
+          hideEmpty('chartPodCpuPct');
+          buildChart('chartPodCpuPct',
+            buildLabels(cpuR),
+            cpuPctDs,
+            v => v !== null ? v.toFixed(1) + '%' : '—'
+          );
+        } else { showEmpty('chartPodCpuPct'); }
+
+        // Memory bytes
+        if (memR.length) {
+          hideEmpty('chartPodMemBytes');
+          buildChart('chartPodMemBytes',
+            buildLabels(memR),
+            seriesDatasets(memR),
+            fmtBytes
+          );
+        } else { showEmpty('chartPodMemBytes'); }
+
+        // Memory %
+        const memPctDs = buildPctDatasets(memR, memL);
+        const hasMemPct = memPctDs.some(ds => ds.data.some(v => v !== null));
+        if (hasMemPct) {
+          hideEmpty('chartPodMemPct');
+          buildChart('chartPodMemPct',
+            buildLabels(memR),
+            memPctDs,
+            v => v !== null ? v.toFixed(1) + '%' : '—'
+          );
+        } else { showEmpty('chartPodMemPct'); }
+      })
+      .catch(err => {
+        if (st) st.textContent = 'Prometheus unavailable';
+        ['chartPodCpuCores','chartPodCpuPct','chartPodMemBytes','chartPodMemPct']
+          .forEach(showEmpty);
+      });
+  };
+
+  document.addEventListener('DOMContentLoaded', loadPodGraphs);
+})();
+</script>
+
+<!-- Conditions -->
+{% set conditions = dep.status.conditions if dep.status else [] %}
+{% if conditions %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Conditions</div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Type</th><th>Status</th><th>Last update</th><th>Reason</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for c in conditions %}
+  <tr>
+    <td><strong>{{ c.type }}</strong></td>
+    <td><span class="badge {{ 'ok' if c.status == 'True' else 'err' if c.status == 'False' else 'warn' }}">{{ c.status }}</span></td>
+    <td style="color:var(--faint);font-size:12px">{{ age(c.last_update_time) if c.last_update_time else '—' }}</td>
+    <td style="font-size:12px">{{ c.reason or '—' }}</td>
+    <td style="font-size:12px;color:var(--faint)">{{ c.message or '' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Containers (pod template spec) -->
+{% set pod_spec = dep.spec.template.spec if dep.spec and dep.spec.template and dep.spec.template.spec else None %}
+{% if pod_spec and pod_spec.containers %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Containers <span class="cnt">{{ pod_spec.containers|length }}</span></div>
+</div>
+<div class="ctr-list" style="margin-bottom:24px">
+{% macro probe_str(p) -%}
+  {%- if not p -%}—
+  {%- elif p.http_get -%}HTTP {{ p.http_get.scheme or 'HTTP' }} {{ p.http_get.path or '/' }}:{{ p.http_get.port }}
+  {%- elif p.tcp_socket -%}TCP :{{ p.tcp_socket.port }}
+  {%- elif p._exec -%}exec {{ p._exec.command | join(' ') if p._exec.command else '' }}
+  {%- else -%}configured{%- endif -%}
+{%- endmacro %}
+{% for c in pod_spec.containers %}
+<div class="ctr-card" style="flex-direction:column;align-items:stretch">
+  <div style="display:flex;align-items:flex-start;gap:10px">
+    <span class="dot ok"></span>
+    <div class="ctr-info" style="flex:1">
+      <div class="ctr-name">{{ c.name }}</div>
+      <div class="ctr-image">{{ c.image }}</div>
+      <div class="ctr-meta">pullPolicy: {{ c.image_pull_policy or '—' }}</div>
+    </div>
+  </div>
+  <div class="ctr-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px;font-size:12px">
+    <!-- Resources -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Resources</div>
+      <div>requests: cpu {{ (c.resources.requests or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.requests or {}).get('memory','—') if c.resources else '—' }}</div>
+      <div>limits: cpu {{ (c.resources.limits or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.limits or {}).get('memory','—') if c.resources else '—' }}</div>
+    </div>
+    <!-- Ports -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Ports</div>
+      {% if c.ports %}
+        {% for p in c.ports %}
+        <div>{{ p.name or '—' }}: {{ p.container_port }}/{{ p.protocol or 'TCP' }}</div>
+        {% endfor %}
+      {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+    </div>
+    <!-- Probes -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Probes</div>
+      <div>liveness: {{ probe_str(c.liveness_probe) }}</div>
+      <div>readiness: {{ probe_str(c.readiness_probe) }}</div>
+      <div>startup: {{ probe_str(c.startup_probe) }}</div>
+    </div>
+    <!-- Env -->
+    {% if c.env or c.env_from %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Env
+        ({{ (c.env|length if c.env else 0) }} vars{% if c.env_from %}, {{ c.env_from|length }} sources{% endif %})</div>
+      {% for e in (c.env or [])[:12] %}
+      <div style="font-family:var(--mono);font-size:11px">
+        {{ e.name }} = {% if e.value %}{{ e.value }}{% elif e.value_from %}<span style="color:var(--faint)">[
+          {%- if e.value_from.config_map_key_ref %}cm:{{ e.value_from.config_map_key_ref.name }}/{{ e.value_from.config_map_key_ref.key }}
+          {%- elif e.value_from.secret_key_ref %}secret:{{ e.value_from.secret_key_ref.name }}/{{ e.value_from.secret_key_ref.key }}
+          {%- elif e.value_from.field_ref %}field:{{ e.value_from.field_ref.field_path }}
+          {%- else %}ref{%- endif -%}
+        ]</span>{% endif %}
+      </div>
+      {% endfor %}
+      {% if c.env and c.env|length > 12 %}
+      <div style="color:var(--faint);font-size:11px">… and {{ c.env|length - 12 }} more</div>
+      {% endif %}
+    </div>
+    {% endif %}
+    <!-- Command / Args -->
+    {% if c.command or c.args %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Command / Args</div>
+      {% if c.command %}<div style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+      {% if c.args %}<div style="font-family:var(--mono);font-size:11px">args: {{ c.args | join(' ') }}</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% if pod_spec.init_containers %}
+{% for c in pod_spec.init_containers %}
+<div class="ctr-card" style="border-style:dashed;opacity:.85">
+  <span class="dot gray"></span>
+  <div class="ctr-info">
+    <div class="ctr-name">{{ c.name }} <span style="color:var(--faint);font-size:11px">(init)</span></div>
+    <div class="ctr-image">{{ c.image }}</div>
+    {% if c.command %}<div class="ctr-meta" style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+</div>
+{% endif %}
+
+<!-- ReplicaSets -->
+{% if replica_sets %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">ReplicaSets <span class="cnt">{{ replica_sets|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Desired</th><th>Ready</th><th>Available</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for rs in replica_sets %}
+  {% set rs_desired = rs.spec.replicas or 0 %}
+  {% set rs_ready   = rs.status.ready_replicas or 0 %}
+  <tr>
+    <td><strong style="font-family:var(--mono);font-size:12px">{{ rs.metadata.name }}</strong></td>
+    <td>{{ rs_desired }}</td>
+    <td><span class="ready"><span class="r">{{ rs_ready }}</span><span class="s">/{{ rs_desired }}</span></span></td>
+    <td>{{ rs.status.available_replicas or 0 }}</td>
+    <td style="color:var(--faint)">{{ age(rs.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Pods -->
+{% if pods %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Pods <span class="cnt">{{ pods|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Status</th><th>Ready</th><th>Restarts</th><th>Node</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for p in pods %}
+  {% set rc, tc = ready_count(p) %}
+  {% set ph = p.status.phase or 'Unknown' %}
+  <tr>
+    <td><a class="row-link" href="/pods/{{ p.metadata.namespace }}/{{ p.metadata.name }}">{{ p.metadata.name }}</a></td>
+    <td><span class="dot {{ phase_cls(ph) }}"></span><span style="font-size:12px">{{ ph }}</span></td>
+    <td><span class="ready"><span class="r">{{ rc }}</span><span class="s">/{{ tc }}</span></span></td>
+    <td>{{ restarts(p) }}</td>
+    <td style="color:var(--faint);font-size:12px">{{ p.spec.node_name or '—' }}</td>
+    <td style="color:var(--faint)">{{ age(p.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Events -->
+{% if events %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Events <span class="cnt">{{ events|length }}</span></div>
+</div>
+<div class="table-wrap" style="padding:0 14px;margin-bottom:20px">
+  <div class="ev-list">
+  {% for e in events %}
+  <div class="ev-row">
+    <span class="ev-type {{ e.type }}">{{ e.type }}</span>
+    <span class="ev-reason">{{ e.reason }}</span>
+    <span class="ev-msg" title="{{ e.message }}">{{ e.message }}</span>
+    <span class="ev-count">×{{ e.count }}</span>
+    <span class="ev-age">{{ age(e.last_timestamp) }}</span>
+  </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Annotations -->
+{% if dep.metadata.annotations %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Annotations <span class="cnt">{{ dep.metadata.annotations|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:35%">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in dep.metadata.annotations.items() %}
+  {% if 'last-applied' not in k %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--muted);vertical-align:top">{{ k }}</td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:pre-wrap;word-break:break-all">{{ v }}</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Manifest YAML -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Manifest</div>
+</div>
+<details style="margin-bottom:24px;border:1px solid var(--border,#252830);border-radius:6px;background:var(--bg-2,#11141a)">
+  <summary style="padding:10px 14px;cursor:pointer;font-size:13px;color:var(--muted);user-select:none">
+    <i class="ti ti-code"></i> Show YAML
+    <button type="button" id="copyYaml" class="btn" style="float:right;padding:2px 10px;font-size:11px">
+      <i class="ti ti-copy"></i> Copy
+    </button>
+  </summary>
+  <pre id="manifestYaml" style="margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--fg);max-height:600px">{{ manifest_yaml }}</pre>
+</details>
+
+<script>
+// ── Replica scaling ───────────────────────────────────────────────────────────
+(function () {
+  const downBtn   = document.getElementById('scaleDown');
+  const upBtn     = document.getElementById('scaleUp');
+  const applyBtn  = document.getElementById('scaleApply');
+  const cancelBtn = document.getElementById('scaleCancel');
+  const countEl   = document.getElementById('replicaCount');
+  const msgEl     = document.getElementById('scaleMsg');
+  if (!downBtn) return;
+
+  let original = parseInt(countEl.textContent, 10);
+  let pending  = original;
+
+  function setDirty(val) {
+    pending = Math.max(0, val);
+    countEl.textContent = pending;
+    const dirty = pending !== original;
+    applyBtn.style.display  = dirty ? '' : 'none';
+    cancelBtn.style.display = dirty ? '' : 'none';
+    msgEl.textContent = dirty ? `(was ${original})` : '';
+  }
+
+  downBtn.onclick  = () => setDirty(pending - 1);
+  upBtn.onclick    = () => setDirty(pending + 1);
+  cancelBtn.onclick = () => setDirty(original);
+
+  applyBtn.onclick = async () => {
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Saving…';
+    msgEl.textContent = '';
+    try {
+      const resp = await fetch(
+        `/deployments/{{ dep.metadata.namespace }}/{{ dep.metadata.name }}/scale`,
+        { method: 'POST',
+          headers: {'Content-Type': 'application/json',
+                    'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''},
+          body: JSON.stringify({replicas: pending}) }
+      );
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.error || resp.statusText);
+      original = pending;
+      applyBtn.style.display  = 'none';
+      cancelBtn.style.display = 'none';
+      msgEl.textContent = 'Scaled ✓';
+      setTimeout(() => { msgEl.textContent = ''; }, 2000);
+    } catch (err) {
+      msgEl.style.color = 'var(--err,#e05252)';
+      msgEl.textContent = 'Error: ' + err.message;
+    } finally {
+      applyBtn.disabled = false;
+      applyBtn.textContent = 'Apply';
+    }
+  };
+})();
+
+// ── YAML copy ─────────────────────────────────────────────────────────────────
+const cy = document.getElementById('copyYaml');
+if (cy) cy.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const txt = document.getElementById('manifestYaml').innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const o = cy.innerHTML; cy.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => cy.innerHTML = o, 1200);
+  });
+});
+</script>
+{% endblock %}

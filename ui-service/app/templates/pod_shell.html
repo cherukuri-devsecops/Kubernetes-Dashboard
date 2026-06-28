@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
+<div class="page-head">
+  <div class="breadcrumb">
+    <a href="/pods">Pods</a> ›
+    <a href="/pods/{{ pod.metadata.namespace }}/{{ pod.metadata.name }}">{{ pod.metadata.name }}</a> ›
+    shell
+  </div>
+  <h1>Shell · {{ pod.metadata.name }}</h1>
+  <div class="sub">{{ pod.metadata.namespace }}</div>
+
+  <form id="shellForm" class="actions" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <label style="font-size:11px;color:var(--faint)">Container</label>
+    <select name="container" id="ctrSel">
+      {% for c in containers %}
+      <option value="{{ c }}" {% if c==sel_ctr %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <label style="font-size:11px;color:var(--faint)">Shell</label>
+    <select id="cmdSel">
+      <option value="/bin/sh" selected>/bin/sh</option>
+      <option value="/bin/bash">/bin/bash</option>
+      <option value="/bin/ash">/bin/ash</option>
+    </select>
+    <button type="button" class="btn" id="connectBtn"><i class="ti ti-plug"></i> Connect</button>
+    <button type="button" class="btn danger" id="disconnectBtn" style="display:none"><i class="ti ti-plug-off"></i> Disconnect</button>
+    <span id="status" style="font-size:11px;color:var(--faint);margin-left:8px">disconnected</span>
+  </form>
+</div>
+
+<div id="terminal" style="height:calc(100vh - 200px);background:#060c14;border:1px solid var(--border);border-radius:8px;margin:0 24px 24px;padding:8px"></div>
+
+<script>
+const NS   = {{ pod.metadata.namespace | tojson }};
+const POD  = {{ pod.metadata.name | tojson }};
+
+const term = new Terminal({
+  cursorBlink: true,
+  fontFamily: 'ui-monospace,"JetBrains Mono","SF Mono",Menlo,monospace',
+  fontSize: 13,
+  theme: { background: '#060c14', foreground: '#e2e8f5', cursor: '#3b82f6' },
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('terminal'));
+fit.fit();
+
+let ws = null;
+
+function setStatus(text, color) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.style.color = color || 'var(--faint)';
+}
+
+function connect() {
+  const container = document.getElementById('ctrSel').value;
+  const cmd       = document.getElementById('cmdSel').value;
+  const proto     = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url       = `${proto}://${location.host}/ws/pods/${encodeURIComponent(NS)}/${encodeURIComponent(POD)}/exec`
+                  + `?container=${encodeURIComponent(container)}&cmd=${encodeURIComponent(cmd)}`;
+
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('connected', 'var(--green)');
+    document.getElementById('connectBtn').style.display = 'none';
+    document.getElementById('disconnectBtn').style.display = '';
+    term.focus();
+    sendResize();
+  };
+  ws.onmessage = (e) => {
+    const data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data);
+    try {
+      const j = JSON.parse(data);
+      if (j && j.type === 'error') { term.write(`\r\n\x1b[31m[error] ${j.msg}\x1b[0m\r\n`); return; }
+    } catch (_) { /* not JSON — raw stdout/stderr */ }
+    term.write(data);
+  };
+  ws.onerror = () => setStatus('error', 'var(--red)');
+  ws.onclose = () => {
+    setStatus('disconnected', 'var(--faint)');
+    document.getElementById('connectBtn').style.display = '';
+    document.getElementById('disconnectBtn').style.display = 'none';
+    ws = null;
+  };
+}
+
+function disconnect() { if (ws) ws.close(); }
+
+function sendResize() {
+  if (!ws || ws.readyState !== 1) return;
+  fit.fit();
+  ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+}
+
+term.onData(data => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'data', data }));
+});
+
+window.addEventListener('resize', sendResize);
+document.getElementById('connectBtn').addEventListener('click', connect);
+document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+document.getElementById('ctrSel').addEventListener('change', () => { if (ws) { disconnect(); setTimeout(connect, 300); } });
+document.getElementById('cmdSel').addEventListener('change', () => { if (ws) { disconnect(); setTimeout(connect, 300); } });
+
+// Auto-connect on load
+connect();
+</script>
+{% endblock %}

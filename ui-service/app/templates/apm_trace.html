@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <div style="display:flex;align-items:center;gap:12px">
+    <a href="/apm" class="btn" style="padding:6px 10px"><i class="ti ti-arrow-left"></i></a>
+    <div>
+      <div class="page-title">Trace Detail</div>
+      <div class="page-subtitle" style="font-family:monospace;font-size:11px;letter-spacing:.02em">{{ trace_id }}</div>
+    </div>
+  </div>
+  <div class="page-controls">
+    <div class="refresh-btn" onclick="location.reload()"><i class="ti ti-refresh"></i></div>
+  </div>
+</div>
+
+{% set backend = trace.get('backend', '') %}
+
+{# ── Jaeger ──────────────────────────────────────────────────────────────── #}
+{% if backend == 'jaeger' %}
+  {% set raw_list = trace.get('trace', []) %}
+  {% set raw = raw_list[0] if raw_list else {} %}
+  {% set spans   = raw.get('spans', []) %}
+  {% set procs   = raw.get('processes', {}) %}
+
+  {# Compute root span + trace duration #}
+  {% set root_span = namespace(s=None) %}
+  {% for sp in spans %}
+    {% if not sp.get('references') %}
+      {% set root_span.s = sp %}
+    {% endif %}
+  {% endfor %}
+  {% if not root_span.s and spans %}{% set root_span.s = spans[0] %}{% endif %}
+
+  {% set root = root_span.s or {} %}
+  {% set root_pid  = root.get('processID', '') %}
+  {% set root_svc  = procs.get(root_pid, {}).get('serviceName', '—') %}
+  {% set root_op   = root.get('operationName', '—') %}
+  {% set trace_start_us = spans | map(attribute='startTime') | min if spans else 0 %}
+  {% set trace_end_us   = spans | map(attribute=namespace(v=0)) | list %}
+
+  {# Total duration: max(start + duration) - min(start) #}
+  {% set ns = namespace(total_us=0) %}
+  {% for sp in spans %}
+    {% set end_us = sp.get('startTime', 0) + sp.get('duration', 0) %}
+    {% if end_us - trace_start_us > ns.total_us %}
+      {% set ns.total_us = end_us - trace_start_us %}
+    {% endif %}
+  {% endfor %}
+  {% set total_dur_us = ns.total_us if ns.total_us > 0 else 1 %}
+  {% set total_dur_ms = (total_dur_us / 1000) | round(2) %}
+
+<!-- Meta card -->
+<div class="panel" style="margin-bottom:0">
+  <div class="panel-head"><div class="panel-title"><i class="ti ti-info-circle" style="color:var(--teal)"></i> Trace Summary</div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0;border-top:1px solid var(--border)">
+    {% set meta = [
+      ('Service',    root_svc,             'ti-circles-relation', 'teal'),
+      ('Operation',  root_op,              'ti-git-branch',       'purple'),
+      ('Duration',   total_dur_ms ~ ' ms', 'ti-clock',            'blue'),
+      ('Spans',      spans | length,       'ti-stack-2',          'orange'),
+      ('Backend',    'Jaeger',             'ti-server',           'gray'),
+    ] %}
+    {% for label, val, icon, cls in meta %}
+    <div style="padding:16px 20px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">
+        <i class="ti {{ icon }}" style="color:var(--{{ cls }});margin-right:4px"></i>{{ label }}
+      </div>
+      <div style="font-size:13px;font-weight:600;word-break:break-all">{{ val }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Span waterfall -->
+<div class="panel" style="margin-top:0">
+  <div class="panel-head">
+    <div class="panel-title"><i class="ti ti-timeline" style="color:var(--purple)"></i> Span Waterfall</div>
+    <span style="font-size:11px;color:var(--faint)">total {{ total_dur_ms }} ms</span>
+  </div>
+
+  <div style="padding:0 0 16px 0;overflow-x:auto">
+    <!-- Header row -->
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:6px 16px;border-bottom:1px solid var(--border);font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em">
+      <div>Operation</div>
+      <div style="text-align:right">Duration</div>
+      <div style="padding-left:12px">Timeline</div>
+    </div>
+
+    {% for sp in spans | sort(attribute='startTime') %}
+      {% set sp_pid    = sp.get('processID', '') %}
+      {% set sp_svc    = procs.get(sp_pid, {}).get('serviceName', '') %}
+      {% set sp_op     = sp.get('operationName', '—') %}
+      {% set sp_dur_us = sp.get('duration', 0) %}
+      {% set sp_dur_ms = (sp_dur_us / 1000) | round(2) %}
+      {% set sp_off_us = sp.get('startTime', 0) - trace_start_us %}
+      {% set bar_left  = (sp_off_us / total_dur_us * 100) | round(2) %}
+      {% set bar_width = [((sp_dur_us / total_dur_us * 100) | round(2)), 0.4] | max %}
+      {% set is_root   = sp.get('spanID') == root.get('spanID') %}
+
+      {# colour by service #}
+      {% set sp_colors = ['#06b6d4','#a855f7','#3b82f6','#10b981','#f59e0b','#f43f5e','#ec4899'] %}
+      {% set svc_list  = procs.values() | map(attribute='serviceName') | list %}
+      {% set svc_idx   = svc_list.index(sp_svc) if sp_svc in svc_list else 0 %}
+      {% set bar_color = sp_colors[svc_idx % sp_colors | length] %}
+
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:5px 16px;border-bottom:1px solid var(--border);align-items:center;
+                {{ 'background:rgba(255,255,255,.03)' if loop.index is odd else '' }}">
+
+      <!-- operation name -->
+      <div style="display:flex;align-items:center;gap:6px;overflow:hidden">
+        {% if is_root %}
+        <i class="ti ti-circle-dot" style="color:{{ bar_color }};flex-shrink:0;font-size:12px"></i>
+        {% else %}
+        <i class="ti ti-circle" style="color:{{ bar_color }};flex-shrink:0;font-size:10px;opacity:.6"></i>
+        {% endif %}
+        <div style="overflow:hidden">
+          <div style="font-size:11px;font-weight:{{ '600' if is_root else '400' }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="{{ sp_op }}">{{ sp_op }}</div>
+          <div style="font-size:10px;color:var(--faint)">{{ sp_svc }}</div>
+        </div>
+      </div>
+
+      <!-- duration -->
+      <div style="text-align:right;font-size:11px;font-variant-numeric:tabular-nums;
+                  color:{{ 'var(--green)' if sp_dur_ms < 100 else 'var(--orange)' if sp_dur_ms < 1000 else 'var(--red)' }}">
+        {{ sp_dur_ms }} ms
+      </div>
+
+      <!-- bar -->
+      <div style="padding-left:12px;position:relative;height:18px">
+        <div style="position:absolute;top:3px;left:calc(12px + {{ bar_left }}%);
+                    width:{{ bar_width }}%;height:12px;
+                    background:{{ bar_color }};border-radius:2px;opacity:.85;
+                    min-width:2px;max-width:calc(100% - {{ bar_left }}% - 12px)"></div>
+      </div>
+
+    </div>
+    {% endfor %}
+
+    <!-- Timeline ruler -->
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:4px 16px">
+      <div></div><div></div>
+      <div style="padding-left:12px;position:relative;height:14px;font-size:9px;color:var(--faint)">
+        <span style="position:absolute;left:12px">0</span>
+        <span style="position:absolute;left:calc(12px + 25%)">{{ (total_dur_ms * 0.25) | round(1) }}ms</span>
+        <span style="position:absolute;left:calc(12px + 50%)">{{ (total_dur_ms * 0.5)  | round(1) }}ms</span>
+        <span style="position:absolute;left:calc(12px + 75%)">{{ (total_dur_ms * 0.75) | round(1) }}ms</span>
+        <span style="position:absolute;right:0">{{ total_dur_ms }}ms</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Span tags detail (collapsible) -->
+  {% if spans %}
+  <div style="padding:0 16px 16px">
+    <details style="cursor:pointer">
+      <summary style="font-size:12px;color:var(--faint);padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px">
+        <i class="ti ti-tags"></i> Span tags &amp; logs <i class="ti ti-chevron-down" style="font-size:11px"></i>
+      </summary>
+      <div style="margin-top:10px;display:grid;gap:8px">
+        {% for sp in spans %}
+        {% set sp_op  = sp.get('operationName','—') %}
+        {% set sp_tags = sp.get('tags', []) %}
+        {% if sp_tags %}
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 14px">
+          <div style="font-size:11px;font-weight:600;margin-bottom:6px;color:var(--text)">{{ sp_op }}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            {% for tag in sp_tags %}
+            <span style="font-size:10px;font-family:monospace;background:var(--surface1);border:1px solid var(--border);border-radius:4px;padding:2px 6px">
+              {{ tag.key }}: <strong>{{ tag.value }}</strong>
+            </span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </details>
+  </div>
+  {% endif %}
+
+</div>
+
+{# ── Tempo ───────────────────────────────────────────────────────────────── #}
+{% elif backend == 'tempo' %}
+  {% set raw = trace.get('trace', {}) %}
+  {% set batches = raw.get('batches', []) %}
+  {% set first_batch = batches[0] if batches else {} %}
+  {% set resource_attrs = first_batch.get('resource', {}).get('attributes', []) %}
+  {% set svc_name = namespace(v='—') %}
+  {% for attr in resource_attrs %}
+    {% if attr.get('key') == 'service.name' %}
+      {% set svc_name.v = attr.get('value', {}).get('stringValue', '—') %}
+    {% endif %}
+  {% endfor %}
+
+  {# collect all spans from all batches #}
+  {% set all_spans = namespace(list=[]) %}
+  {% for batch in batches %}
+    {% for scope in batch.get('scopeSpans', []) %}
+      {% for sp in scope.get('spans', []) %}
+        {% set _ = all_spans.list.append(sp) %}
+      {% endfor %}
+    {% endfor %}
+  {% endfor %}
+
+  {% set total_spans = all_spans.list | length %}
+
+  {# Compute trace duration from spans #}
+  {% set ns2 = namespace(min_ns=0, max_ns=0, first=true) %}
+  {% for sp in all_spans.list %}
+    {% set s = sp.get('startTimeUnixNano','0') | int %}
+    {% set e = sp.get('endTimeUnixNano','0') | int %}
+    {% if ns2.first %}
+      {% set ns2.min_ns = s %}{% set ns2.max_ns = e %}{% set ns2.first = false %}
+    {% else %}
+      {% if s < ns2.min_ns %}{% set ns2.min_ns = s %}{% endif %}
+      {% if e > ns2.max_ns %}{% set ns2.max_ns = e %}{% endif %}
+    {% endif %}
+  {% endfor %}
+  {% set total_dur_ms = ((ns2.max_ns - ns2.min_ns) / 1e6) | round(2) %}
+  {% set trace_start_ns = ns2.min_ns %}
+  {% set total_dur_ns   = [(ns2.max_ns - ns2.min_ns), 1] | max %}
+
+<!-- Meta card -->
+<div class="panel" style="margin-bottom:0">
+  <div class="panel-head"><div class="panel-title"><i class="ti ti-info-circle" style="color:var(--teal)"></i> Trace Summary</div></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0;border-top:1px solid var(--border)">
+    {% set meta = [
+      ('Service',  svc_name.v,              'ti-circles-relation', 'teal'),
+      ('Duration', total_dur_ms ~ ' ms',    'ti-clock',            'blue'),
+      ('Spans',    total_spans,             'ti-stack-2',          'orange'),
+      ('Backend',  'Tempo (OTLP)',          'ti-server',           'gray'),
+    ] %}
+    {% for label, val, icon, cls in meta %}
+    <div style="padding:16px 20px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+      <div style="font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">
+        <i class="ti {{ icon }}" style="color:var(--{{ cls }});margin-right:4px"></i>{{ label }}
+      </div>
+      <div style="font-size:13px;font-weight:600;word-break:break-all">{{ val }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Span waterfall (Tempo / OTLP) -->
+<div class="panel" style="margin-top:0">
+  <div class="panel-head">
+    <div class="panel-title"><i class="ti ti-timeline" style="color:var(--purple)"></i> Span Waterfall</div>
+    <span style="font-size:11px;color:var(--faint)">total {{ total_dur_ms }} ms — {{ total_spans }} spans</span>
+  </div>
+  <div style="padding:0 0 16px;overflow-x:auto">
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:6px 16px;border-bottom:1px solid var(--border);font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em">
+      <div>Operation</div><div style="text-align:right">Duration</div><div style="padding-left:12px">Timeline</div>
+    </div>
+    {% set sp_colors = ['#06b6d4','#a855f7','#3b82f6','#10b981','#f59e0b','#f43f5e','#ec4899'] %}
+    {% for sp in all_spans.list | sort(attribute='startTimeUnixNano') %}
+      {% set sp_name   = sp.get('name', '—') %}
+      {% set sp_start  = sp.get('startTimeUnixNano', '0') | int %}
+      {% set sp_end    = sp.get('endTimeUnixNano', '0') | int %}
+      {% set sp_dur_ms = ((sp_end - sp_start) / 1e6) | round(2) %}
+      {% set bar_left  = (((sp_start - trace_start_ns) / total_dur_ns) * 100) | round(2) %}
+      {% set bar_width = [((sp_end - sp_start) / total_dur_ns * 100) | round(2), 0.4] | max %}
+      {% set bar_color = sp_colors[loop.index0 % 7] %}
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:5px 16px;border-bottom:1px solid var(--border);align-items:center;
+                {{ 'background:rgba(255,255,255,.03)' if loop.index is odd else '' }}">
+      <div style="display:flex;align-items:center;gap:6px;overflow:hidden">
+        <i class="ti ti-circle" style="color:{{ bar_color }};flex-shrink:0;font-size:10px"></i>
+        <div style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="{{ sp_name }}">{{ sp_name }}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;font-variant-numeric:tabular-nums;
+                  color:{{ 'var(--green)' if sp_dur_ms < 100 else 'var(--orange)' if sp_dur_ms < 1000 else 'var(--red)' }}">
+        {{ sp_dur_ms }} ms
+      </div>
+      <div style="padding-left:12px;position:relative;height:18px">
+        <div style="position:absolute;top:3px;left:calc(12px + {{ bar_left }}%);
+                    width:{{ bar_width }}%;height:12px;background:{{ bar_color }};
+                    border-radius:2px;opacity:.85;min-width:2px"></div>
+      </div>
+    </div>
+    {% endfor %}
+    <div style="display:grid;grid-template-columns:260px 80px 1fr;gap:0;padding:4px 16px">
+      <div></div><div></div>
+      <div style="padding-left:12px;position:relative;height:14px;font-size:9px;color:var(--faint)">
+        <span style="position:absolute;left:12px">0</span>
+        <span style="position:absolute;left:calc(12px + 50%)">{{ (total_dur_ms * 0.5) | round(1) }}ms</span>
+        <span style="position:absolute;right:0">{{ total_dur_ms }}ms</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── No data / unknown backend ───────────────────────────────────────────── #}
+{% else %}
+<div class="panel">
+  <div style="padding:48px;text-align:center;color:var(--faint)">
+    <i class="ti ti-mood-empty" style="font-size:36px;display:block;margin-bottom:12px;opacity:.4"></i>
+    <strong style="color:var(--text)">Trace not found.</strong><br>
+    <span style="font-size:12px">The trace may have expired or the backend is unreachable.</span><br>
+    <a href="/apm" class="btn" style="margin-top:16px;display:inline-flex;align-items:center;gap:6px">
+      <i class="ti ti-arrow-left"></i> Back to APM
+    </a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

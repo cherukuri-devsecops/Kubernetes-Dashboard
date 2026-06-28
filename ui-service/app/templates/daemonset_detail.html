@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div class="breadcrumb"><a href="/workloads">Workloads</a> › {{ ds.metadata.namespace }}</div>
+  <h1>{{ ds.metadata.name }}</h1>
+  <div class="sub">{{ ds.metadata.namespace }} / daemonset</div>
+  <div class="actions">
+    {% if can('update', 'daemonsets', ds.metadata.namespace) %}
+    <button class="btn" onclick="openEditor('DaemonSet','{{ ds.metadata.namespace }}','{{ ds.metadata.name }}')"
+            title="Edit YAML in resource editor">
+      <i class="ti ti-code"></i> Edit YAML
+    </button>
+    {% endif %}
+    {% if can('delete', 'daemonsets', ds.metadata.namespace) %}
+    <button class="btn danger"
+            onclick="deleteResource('DaemonSet','{{ ds.metadata.namespace }}','{{ ds.metadata.name }}','/workloads')">
+      <i class="ti ti-trash"></i> Delete
+    </button>
+    {% else %}
+    <span class="btn danger rbac-denied" title="You do not have permission to delete daemonsets">
+      <i class="ti ti-trash"></i> Delete
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+{% set desired   = ds.status.desired_number_scheduled or 0 %}
+{% set ready     = ds.status.number_ready or 0 %}
+{% set available = ds.status.number_available or 0 %}
+{% set healthy   = ready == desired and desired > 0 %}
+
+<!-- Meta grid -->
+<div class="meta-grid">
+  <div class="meta-cell">
+    <div class="meta-key">Status</div>
+    <div class="meta-val">
+      <span class="dot {{ 'ok' if healthy else 'warn' }}"></span>
+      {{ 'Healthy' if healthy else 'Degraded' }}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Desired</div>
+    <div class="meta-val">{{ desired }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Ready</div>
+    <div class="meta-val ready"><span class="r">{{ ready }}</span><span class="s">/{{ desired }}</span></div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Available</div>
+    <div class="meta-val">{{ available }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Current</div>
+    <div class="meta-val">{{ ds.status.current_number_scheduled or 0 }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Updated</div>
+    <div class="meta-val">{{ ds.status.updated_number_scheduled or 0 }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Update Strategy</div>
+    <div class="meta-val">{{ (ds.spec.update_strategy.type if ds.spec and ds.spec.update_strategy else None) or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Age</div>
+    <div class="meta-val">{{ age(ds.metadata.creation_timestamp) }}</div>
+  </div>
+</div>
+
+<!-- Selector / Labels -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:20px;font-size:12px">
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Selector</div>
+    {% set sel = ds.spec.selector.match_labels if ds.spec and ds.spec.selector else {} %}
+    {% if sel %}
+    <div class="tags">{% for k,v in sel.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Labels</div>
+    {% if ds.metadata.labels %}
+    <div class="tags">{% for k,v in ds.metadata.labels.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+</div>
+
+<!-- Containers -->
+{% set pod_spec = ds.spec.template.spec if ds.spec and ds.spec.template and ds.spec.template.spec else None %}
+{% if pod_spec and pod_spec.containers %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Containers <span class="cnt">{{ pod_spec.containers|length }}</span></div>
+</div>
+<div class="ctr-list" style="margin-bottom:24px">
+{% macro probe_str(p) -%}
+  {%- if not p -%}—
+  {%- elif p.http_get -%}HTTP {{ p.http_get.scheme or 'HTTP' }} {{ p.http_get.path or '/' }}:{{ p.http_get.port }}
+  {%- elif p.tcp_socket -%}TCP :{{ p.tcp_socket.port }}
+  {%- elif p._exec -%}exec {{ p._exec.command | join(' ') if p._exec.command else '' }}
+  {%- else -%}configured{%- endif -%}
+{%- endmacro %}
+{% for c in pod_spec.containers %}
+<div class="ctr-card" style="flex-direction:column;align-items:stretch">
+  <div style="display:flex;align-items:flex-start;gap:10px">
+    <span class="dot ok"></span>
+    <div class="ctr-info" style="flex:1">
+      <div class="ctr-name">{{ c.name }}</div>
+      <div class="ctr-image">{{ c.image }}</div>
+      <div class="ctr-meta">pullPolicy: {{ c.image_pull_policy or '—' }}</div>
+    </div>
+  </div>
+  <div class="ctr-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px;font-size:12px">
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Resources</div>
+      <div>requests: cpu {{ (c.resources.requests or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.requests or {}).get('memory','—') if c.resources else '—' }}</div>
+      <div>limits: cpu {{ (c.resources.limits or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.limits or {}).get('memory','—') if c.resources else '—' }}</div>
+    </div>
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Ports</div>
+      {% if c.ports %}
+        {% for p in c.ports %}
+        <div>{{ p.name or '—' }}: {{ p.container_port }}/{{ p.protocol or 'TCP' }}</div>
+        {% endfor %}
+      {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+    </div>
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Probes</div>
+      <div>liveness: {{ probe_str(c.liveness_probe) }}</div>
+      <div>readiness: {{ probe_str(c.readiness_probe) }}</div>
+      <div>startup: {{ probe_str(c.startup_probe) }}</div>
+    </div>
+    {% if c.env or c.env_from %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Env
+        ({{ (c.env|length if c.env else 0) }} vars{% if c.env_from %}, {{ c.env_from|length }} sources{% endif %})</div>
+      {% for e in (c.env or [])[:12] %}
+      <div style="font-family:var(--mono);font-size:11px">
+        {{ e.name }} = {% if e.value %}{{ e.value }}{% elif e.value_from %}<span style="color:var(--faint)">[
+          {%- if e.value_from.config_map_key_ref %}cm:{{ e.value_from.config_map_key_ref.name }}/{{ e.value_from.config_map_key_ref.key }}
+          {%- elif e.value_from.secret_key_ref %}secret:{{ e.value_from.secret_key_ref.name }}/{{ e.value_from.secret_key_ref.key }}
+          {%- elif e.value_from.field_ref %}field:{{ e.value_from.field_ref.field_path }}
+          {%- else %}ref{%- endif -%}
+        ]</span>{% endif %}
+      </div>
+      {% endfor %}
+      {% if c.env and c.env|length > 12 %}
+      <div style="color:var(--faint);font-size:11px">… and {{ c.env|length - 12 }} more</div>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if c.command or c.args %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Command / Args</div>
+      {% if c.command %}<div style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+      {% if c.args %}<div style="font-family:var(--mono);font-size:11px">args: {{ c.args | join(' ') }}</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% if pod_spec.init_containers %}
+{% for c in pod_spec.init_containers %}
+<div class="ctr-card" style="border-style:dashed;opacity:.85">
+  <span class="dot gray"></span>
+  <div class="ctr-info">
+    <div class="ctr-name">{{ c.name }} <span style="color:var(--faint);font-size:11px">(init)</span></div>
+    <div class="ctr-image">{{ c.image }}</div>
+    {% if c.command %}<div class="ctr-meta" style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+</div>
+{% endif %}
+
+<!-- Pods -->
+{% if pods %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Pods <span class="cnt">{{ pods|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Status</th><th>Ready</th><th>Restarts</th><th>Node</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for p in pods %}
+  {% set rc, tc = ready_count(p) %}
+  {% set ph = p.status.phase or 'Unknown' %}
+  <tr>
+    <td><a class="row-link" href="/pods/{{ p.metadata.namespace }}/{{ p.metadata.name }}">{{ p.metadata.name }}</a></td>
+    <td><span class="dot {{ phase_cls(ph) }}"></span><span style="font-size:12px">{{ ph }}</span></td>
+    <td><span class="ready"><span class="r">{{ rc }}</span><span class="s">/{{ tc }}</span></span></td>
+    <td>{{ restarts(p) }}</td>
+    <td style="color:var(--faint);font-size:12px">{{ p.spec.node_name or '—' }}</td>
+    <td style="color:var(--faint)">{{ age(p.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Events -->
+{% if events %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Events <span class="cnt">{{ events|length }}</span></div>
+</div>
+<div class="table-wrap" style="padding:0 14px;margin-bottom:20px">
+  <div class="ev-list">
+  {% for e in events %}
+  <div class="ev-row">
+    <span class="ev-type {{ e.type }}">{{ e.type }}</span>
+    <span class="ev-reason">{{ e.reason }}</span>
+    <span class="ev-msg" title="{{ e.message }}">{{ e.message }}</span>
+    <span class="ev-count">×{{ e.count }}</span>
+    <span class="ev-age">{{ age(e.last_timestamp) }}</span>
+  </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Annotations -->
+{% if ds.metadata.annotations %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Annotations <span class="cnt">{{ ds.metadata.annotations|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:35%">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in ds.metadata.annotations.items() %}
+  {% if 'last-applied' not in k %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--muted);vertical-align:top">{{ k }}</td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:pre-wrap;word-break:break-all">{{ v }}</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Manifest YAML -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Manifest</div>
+</div>
+<details style="margin-bottom:24px;border:1px solid var(--border,#252830);border-radius:6px;background:var(--bg-2,#11141a)">
+  <summary style="padding:10px 14px;cursor:pointer;font-size:13px;color:var(--muted);user-select:none">
+    <i class="ti ti-code"></i> Show YAML
+    <button type="button" id="copyYaml" class="btn" style="float:right;padding:2px 10px;font-size:11px">
+      <i class="ti ti-copy"></i> Copy
+    </button>
+  </summary>
+  <pre id="manifestYaml" style="margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--fg);max-height:600px">{{ manifest_yaml }}</pre>
+</details>
+
+<script>
+const cy = document.getElementById('copyYaml');
+if (cy) cy.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const txt = document.getElementById('manifestYaml').innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const o = cy.innerHTML; cy.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => cy.innerHTML = o, 1200);
+  });
+});
+</script>
+{% endblock %}

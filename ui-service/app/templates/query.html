@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Query <span style="font-size:14px;font-weight:400;color:var(--faint);margin-left:8px">NRQL-style language for your cluster</span></h1>
+  <form action="/refresh" method="post" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+    <button class="btn" type="submit" title="Bypass cache"><i class="ti ti-refresh"></i> Refresh</button>
+  </form>
+</div>
+
+<form method="get" action="/query" id="qform" style="margin-bottom:10px">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <textarea name="q" id="q" rows="2"
+              placeholder='SELECT name, ns, status FROM pods WHERE status != "Running" LIMIT 50'
+              style="flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+                     padding:10px 12px;background:var(--bg-2,#0f1115);color:var(--fg,#e6e6e6);
+                     border:1px solid var(--border,#252830);border-radius:6px;resize:vertical">{{ q or '' }}</textarea>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <button class="btn primary" type="submit" style="height:40px;padding:0 18px">
+        <i class="ti ti-player-play"></i> Run
+      </button>
+      {% if db_ready and q %}
+      <button type="button" class="btn" style="height:32px;padding:0 12px;font-size:12px"
+              onclick="document.getElementById('save-form').style.display='flex'">
+        <i class="ti ti-device-floppy"></i> Save
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{% if db_ready and q %}
+<form id="save-form" method="post" action="/query/save"
+      style="display:none;gap:8px;margin-bottom:14px;align-items:center">
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+  <input type="text" name="name" placeholder="Saved query name" required
+         style="flex:1;max-width:300px;padding:8px 10px;background:var(--bg-2,#0f1115);
+                color:var(--fg,#e6e6e6);border:1px solid var(--border,#252830);border-radius:6px;font-size:13px">
+  <button class="btn primary" type="submit" style="height:34px;padding:0 14px"><i class="ti ti-check"></i> Save</button>
+  <button class="btn" type="button" onclick="this.parentElement.style.display='none'"
+          style="height:34px;padding:0 14px">Cancel</button>
+</form>
+{% endif %}
+
+{% if saved %}
+<div style="margin-bottom:14px">
+  <div style="font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+    <i class="ti ti-bookmark"></i> Saved queries
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    {% for s in saved %}
+    <div style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-2,#11141a);
+                border:1px solid var(--border,#252830);border-radius:14px;padding:4px 6px 4px 10px;font-size:12px">
+      <a href="/query?q={{ s.q | urlencode }}" style="color:var(--fg,#e6e6e6);text-decoration:none">{{ s.name }}</a>
+      <form method="post" action="/query/delete/{{ s.id }}" style="display:inline;margin:0">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+        <button type="submit" title="Delete" style="background:none;border:none;color:var(--faint);
+                                                     cursor:pointer;padding:0 4px;font-size:13px">×</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<details style="margin-bottom:18px">
+  <summary style="cursor:pointer;color:var(--faint);font-size:12px">Examples &amp; syntax</summary>
+  <div style="margin-top:10px;font-size:12px;color:var(--faint)">
+    <p style="margin:6px 0"><strong>Resources:</strong> pods, nodes, namespaces, services, deployments, statefulsets,
+       daemonsets, jobs, cronjobs, events, pvs, pvcs, configmaps, secrets, ingresses</p>
+    <p style="margin:6px 0"><strong>Operators:</strong> <code>= != ~ !~ &gt; &lt; &gt;= &lt;=</code> (<code>~</code> is regex/contains)</p>
+    <p style="margin:6px 0"><strong>Combinators:</strong> AND, OR, parentheses</p>
+    <p style="margin:6px 0"><strong>Clauses:</strong> WHERE, GROUP BY, ORDER BY [ASC|DESC], LIMIT</p>
+    <ul style="margin:8px 0 0 0;padding-left:20px;line-height:1.9">
+      {% for ex in examples %}
+      <li><a href="/query?q={{ ex | urlencode }}" style="color:var(--fg);text-decoration:none">
+        <code style="background:var(--bg-2,#0f1115);padding:2px 6px;border-radius:4px">{{ ex }}</code>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </div>
+</details>
+
+<div id="query-results">
+  {% include "partials/query_results.html" %}
+</div>
+
+<script>
+// Submit on Cmd/Ctrl+Enter
+document.getElementById('q').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    document.getElementById('qform').submit();
+  }
+});
+</script>
+{% endblock %}

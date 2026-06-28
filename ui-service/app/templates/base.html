@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }} — Kubernetes Dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/tabler-icons.min.css') }}?v=3.0.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/codemirror.min.css') }}?v=5.65.16">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/codemirror-dracula.min.css') }}?v=5.65.16">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+<meta name="csrf-token" content="{{ session.get('csrf_token', '') }}">
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}?v=4.4.1" defer></script>
+<script src="{{ url_for('static', filename='vendor/htmx.min.js') }}?v=1.9.10" defer></script>
+<script src="{{ url_for('static', filename='vendor/codemirror.min.js') }}?v=5.65.16" defer></script>
+<script src="{{ url_for('static', filename='vendor/codemirror-yaml.min.js') }}?v=5.65.16" defer></script>
+</head>
+<body>
+<script>if(localStorage.getItem('sidebar-collapsed')==='1')document.body.classList.add('sidebar-collapsed');</script>
+<div class="layout">
+
+<!-- ── Sidebar ───────────────────────────────────────────── -->
+<aside class="sidebar">
+  <!-- Toggle button -->
+  <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">
+    <i class="ti ti-chevron-left"></i>
+  </button>
+
+  <div class="sidebar-brand">
+    <div class="brand-icon">
+      <img src="{{ url_for('static', filename='image.png') }}" width="32" height="32" alt="K8s Observability" style="border-radius:6px;display:block;">
+    </div>
+    <div class="brand-text">
+      <div class="name"><span>k8s</span> Observability</div>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a class="nav-item {{ 'active' if page_path=='/' }}" href="/" data-tooltip="Overview"><i class="ti ti-layout-dashboard ni"></i><span class="nl">Overview</span></a>
+    <a class="nav-item {{ 'active' if '/query' in page_path }}" href="/query" data-tooltip="Query"><i class="ti ti-search ni"></i><span class="nl">Query</span></a>
+
+    <div class="nav-section">Workloads</div>
+    <a class="nav-item nav-sub {{ 'active' if '/pods' in page_path }}" href="/pods" data-tooltip="Pods"><i class="ti ti-circles-relation ni"></i><span class="nl">Pods</span></a>
+    <a class="nav-item nav-sub {{ 'active' if '/deployments' in page_path }}" href="/deployments" data-tooltip="Deployments"><i class="ti ti-stack-2 ni"></i><span class="nl">Deployments</span></a>
+    <a class="nav-item nav-sub {{ 'active' if '/workloads' in page_path }}" href="/workloads" data-tooltip="StatefulSets / DaemonSets"><i class="ti ti-topology-star ni"></i><span class="nl">StatefulSets / DaemonSets</span></a>
+    <a class="nav-item nav-sub {{ 'active' if '/jobs' in page_path }}" href="/jobs" data-tooltip="Jobs & CronJobs"><i class="ti ti-hammer ni"></i><span class="nl">Jobs &amp; CronJobs</span></a>
+
+    <div class="nav-section">Network</div>
+    <a class="nav-item {{ 'active' if '/services' in page_path }}" href="/services" data-tooltip="Services"><i class="ti ti-network ni"></i><span class="nl">Services</span></a>
+    <a class="nav-item {{ 'active' if '/ingresses' in page_path }}" href="/ingresses" data-tooltip="Ingresses"><i class="ti ti-arrow-merge ni"></i><span class="nl">Ingresses</span></a>
+
+    <div class="nav-section">Storage &amp; Config</div>
+    <a class="nav-item {{ 'active' if '/storage' in page_path }}" href="/storage" data-tooltip="Persistent Volumes"><i class="ti ti-database ni"></i><span class="nl">Persistent Volumes</span></a>
+    <a class="nav-item {{ 'active' if '/config' in page_path }}" href="/config" data-tooltip="Config & Secrets"><i class="ti ti-file-settings ni"></i><span class="nl">Config &amp; Secrets</span></a>
+
+    <div class="nav-section">Cluster</div>
+    <a class="nav-item {{ 'active' if '/namespaces' in page_path }}" href="/namespaces" data-tooltip="Namespaces"><i class="ti ti-box-multiple ni"></i><span class="nl">Namespaces</span></a>
+    <a class="nav-item {{ 'active' if '/nodes' in page_path }}" href="/nodes" data-tooltip="Nodes"><i class="ti ti-server ni"></i><span class="nl">Nodes</span></a>
+    <a class="nav-item {{ 'active' if page_path=='/events' }}" href="/events" data-tooltip="Events"><i class="ti ti-bell ni"></i><span class="nl">Events</span>{% if nav %}{% for item in nav %}{% if item.label=='Events' and item.count %}<span class="nb">{{ item.count }}</span>{% endif %}{% endfor %}{% endif %}</a>
+    <a class="nav-item nav-sub {{ 'active' if '/events/history' in page_path }}" href="/events/history" data-tooltip="Events History"><i class="ti ti-history ni"></i><span class="nl">Events History</span></a>
+    <a class="nav-item {{ 'active' if '/lifecycle' in page_path }}" href="/lifecycle" data-tooltip="Pod Lifecycle"><i class="ti ti-heart-rate-monitor ni"></i><span class="nl">Pod Lifecycle</span></a>
+    <a class="nav-item {{ 'active' if page_path=='/logs' }}" href="/logs" data-tooltip="Logs"><i class="ti ti-file-text ni"></i><span class="nl">Logs</span></a>
+    <a class="nav-item nav-sub {{ 'active' if '/logs/archive' in page_path }}" href="/logs/archive" data-tooltip="Log Archive"><i class="ti ti-archive ni"></i><span class="nl">Log Archive</span></a>
+    <a class="nav-item {{ 'active' if '/apm' in page_path }}" href="/apm" data-tooltip="APM"><i class="ti ti-activity ni"></i><span class="nl">APM</span></a>
+    <a class="nav-item {{ 'active' if '/audit' in page_path }}" href="/audit" data-tooltip="Audit Log"><i class="ti ti-clipboard-list ni"></i><span class="nl">Audit Log</span></a>
+
+    {% if plugin_nav %}
+    <div class="nav-section">Plugins</div>
+    {% for pn in plugin_nav %}
+    <a class="nav-item nav-sub {{ 'active' if pn.url in page_path }}" href="{{ pn.url }}" data-tooltip="{{ pn.label }}">
+      <i class="ti {{ pn.icon }} ni"></i><span class="nl">{{ pn.label }}</span>
+    </a>
+    {% endfor %}
+    {% endif %}
+
+    <div class="nav-section">System</div>
+    <a class="nav-item {{ 'active' if page_path == '/health' }}" href="/health?ui=1" data-tooltip="Service Health"><i class="ti ti-heartbeat ni"></i><span class="nl">Service Health</span></a>
+    <a class="nav-item {{ 'active' if '/clusters' in page_path }}" href="/clusters" data-tooltip="Clusters"><i class="ti ti-topology-star-3 ni"></i><span class="nl">Clusters</span></a>
+    <a class="nav-item {{ 'active' if '/users' in page_path }}" href="/users" data-tooltip="User Management"><i class="ti ti-users ni"></i><span class="nl">Users</span></a>
+    <a class="nav-item" href="/setup" data-tooltip="Settings"><i class="ti ti-settings ni"></i><span class="nl">Settings</span></a>
+  </nav>
+
+  <div class="sidebar-footer">
+    {% if user %}
+    <div class="user-avatar">{{ (user.name or user.email or 'U')[:2].upper() }}</div>
+    <div class="user-info">
+      <div class="un">{{ user.name }}</div>
+      <div class="ue">{{ user.email }}</div>
+    </div>
+    <a href="/logout" title="Sign out" style="color:var(--faint);font-size:16px"><i class="ti ti-logout"></i></a>
+    {% else %}
+    <div style="font-size:11px;color:var(--faint)">Not signed in</div>
+    {% endif %}
+  </div>
+</aside>
+
+<!-- ── Main ───────────────────────────────────────────────── -->
+<div class="main">
+  <header class="topbar">
+    <div class="hamburger"><i class="ti ti-menu-2"></i></div>
+    <div class="search-wrap">
+      <i class="ti ti-search"></i>
+      <input class="search-input" type="search" name="q" placeholder="Search anything in your cluster..."
+             hx-get="/search" hx-trigger="keyup changed delay:300ms"
+             hx-target="#search-results" autocomplete="off">
+      <span class="search-kbd">⌘ /</span>
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <div class="topbar-actions">
+      <div class="tbar-btn htmx-spinner" id="htmx-spinner"></div>
+
+      <!-- Cluster switcher -->
+      {% if user and cluster_mode %}
+      <div class="cluster-switcher" id="clusterSwitcher">
+        <button class="cluster-btn" onclick="toggleClusterMenu(event)" title="Switch cluster">
+          <i class="ti ti-topology-star-3" style="color:var(--teal)"></i>
+          <span class="cluster-name">{{ active_cluster or cluster_mode }}</span>
+          <i class="ti ti-chevron-down" id="clusterChevron" style="font-size:11px;color:var(--faint)"></i>
+        </button>
+        <div class="cluster-menu" id="clusterMenu">
+          <div class="cm-header">Switch Cluster</div>
+          {% if contexts %}
+          <div class="cm-section">Contexts</div>
+          {% for c in contexts %}
+          <form action="/ctx" method="post" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token','') }}">
+            <input type="hidden" name="ctx" value="{{ c }}">
+            <button type="submit" class="cm-item {{ 'cm-active' if c == current_ctx }}">
+              <i class="ti ti-plug" style="font-size:12px"></i> {{ c }}
+            </button>
+          </form>
+          {% endfor %}
+          {% endif %}
+          <div class="cm-section">Manage</div>
+          <a class="cm-item" href="/clusters"><i class="ti ti-topology-star-3" style="font-size:12px"></i> All Clusters</a>
+          <a class="cm-item" href="/setup"><i class="ti ti-settings" style="font-size:12px"></i> Connection Settings</a>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Resource editor trigger -->
+      {% if user and cluster_mode %}
+      <button class="tbar-btn" onclick="openEditor()" title="Resource Editor (YAML)">
+        <i class="ti ti-code"></i>
+      </button>
+      {% endif %}
+
+      <div class="tbar-btn" style="position:relative">
+        <i class="ti ti-bell"></i>
+        {% if nav %}{% for item in nav %}{% if item.label=='Events' and item.count %}<span class="badge-dot">{{ item.count }}</span>{% endif %}{% endfor %}{% endif %}
+      </div>
+      <div class="tbar-btn" id="themeToggle" title="Toggle theme"><i class="ti ti-moon"></i></div>
+      {% if user %}
+      <div class="user-avatar" style="width:34px;height:34px;font-size:12px;cursor:pointer">
+        {% if user.picture %}<img src="{{ user.picture }}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="">
+        {% else %}{{ (user.name or 'U')[:2].upper() }}{% endif %}
+      </div>
+      {% endif %}
+      {% if contexts %}
+      <form action="/ctx" method="post" style="display:none" id="ctxForm">
+        <input type="hidden" name="ctx" id="ctxInput">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+      </form>
+      {% endif %}
+    </div>
+  </header>
+
+  <div class="page-wrap">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Resource Editor Modal
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="editorModal" class="modal-backdrop" style="display:none" onclick="if(event.target===this)closeEditor()">
+  <div class="modal-box editor-modal">
+    <div class="modal-head">
+      <div style="display:flex;align-items:center;gap:10px">
+        <i class="ti ti-code" style="color:var(--teal)"></i>
+        <span id="editorTitle">Resource Editor</span>
+        <span id="editorBadge" class="badge blue" style="display:none"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <a id="docsLink" href="#" target="_blank" rel="noopener"
+           class="btn btn-sm" style="display:none" title="Open K8s API docs">
+          <i class="ti ti-book"></i> Docs
+        </a>
+        <button class="btn btn-sm" onclick="closeEditor()"><i class="ti ti-x"></i></button>
+      </div>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <textarea id="editorTextarea"></textarea>
+    </div>
+    <div class="modal-foot">
+      <div id="editorMsg" class="editor-msg"></div>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn" onclick="closeEditor()">Cancel</button>
+        <button class="btn" id="editorApplyBtn" onclick="applyResource()" style="background:var(--teal);color:#fff">
+          <i class="ti ti-check"></i> Apply
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Operation Toast Tray  (cancellable operations)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="opTray" class="op-tray" style="display:none"></div>
+
+<script>
+// ── CSRF helper ────────────────────────────────────────────────────────
+const _csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// ── CSRF: attach token to every HTMX mutating request ─────────────────
+(function(){
+  const token = _csrf();
+  document.body.addEventListener('htmx:configRequest', function(evt) {
+    const method = (evt.detail.verb || '').toUpperCase();
+    if (['POST','PUT','DELETE','PATCH'].includes(method))
+      evt.detail.headers['X-CSRF-Token'] = token;
+  });
+})();
+
+// ── HTMX spinner ──────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  if(!e.target.closest('.search-wrap'))
+    document.getElementById('search-results').innerHTML = '';
+});
+document.body.addEventListener('htmx:beforeRequest', () =>
+  document.getElementById('htmx-spinner').style.display = 'flex');
+document.body.addEventListener('htmx:afterRequest',  () =>
+  document.getElementById('htmx-spinner').style.display = 'none');
+
+// ── Sidebar collapse / expand ──────────────────────────────────────────
+(function(){
+  const btn = document.getElementById('sidebarToggle');
+  const ham = document.querySelector('.hamburger');
+  function toggle() {
+    const collapsed = document.body.classList.toggle('sidebar-collapsed');
+    localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+    btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 350);
+  }
+  if (btn) btn.addEventListener('click', toggle);
+  if (ham) ham.addEventListener('click', toggle);
+})();
+
+// ── Cluster menu ───────────────────────────────────────────────────────
+function toggleClusterMenu(e) {
+  e.stopPropagation();
+  const m   = document.getElementById('clusterMenu');
+  const ch  = document.getElementById('clusterChevron');
+  const open = m.classList.toggle('open');
+  if (ch) ch.style.transform = open ? 'rotate(180deg)' : '';
+}
+document.addEventListener('click', () => {
+  const m  = document.getElementById('clusterMenu');
+  const ch = document.getElementById('clusterChevron');
+  if (m && m.classList.contains('open')) {
+    m.classList.remove('open');
+    if (ch) ch.style.transform = '';
+  }
+});
+
+// ── Theme toggle ───────────────────────────────────────────────────────
+(function(){
+  const btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  const stored = localStorage.getItem('theme');
+  if (stored === 'light') document.body.classList.add('theme-light');
+  btn.addEventListener('click', () => {
+    const light = document.body.classList.toggle('theme-light');
+    localStorage.setItem('theme', light ? 'light' : 'dark');
+    btn.querySelector('i').className = light ? 'ti ti-sun' : 'ti ti-moon';
+  });
+  if (stored === 'light') btn.querySelector('i').className = 'ti ti-sun';
+})();
+
+// ═══════════════════════════════════════════════════════════════════════
+// Operation Manager — cancellable fetch operations with toast tray
+// ═══════════════════════════════════════════════════════════════════════
+const opManager = (() => {
+  let _seq = 0;
+  const _ops = {};
+  const tray = () => document.getElementById('opTray');
+
+  function _render() {
+    const t = tray();
+    const ids = Object.keys(_ops);
+    if (!ids.length) { t.style.display = 'none'; return; }
+    t.style.display = 'flex';
+    t.innerHTML = ids.map(id => {
+      const op = _ops[id];
+      const ic = op.state === 'pending'  ? '<span class="op-spin"><i class="ti ti-loader-2"></i></span>'
+               : op.state === 'done'     ? '<i class="ti ti-check" style="color:var(--green)"></i>'
+               : op.state === 'error'    ? '<i class="ti ti-x" style="color:var(--red)"></i>'
+               : '<i class="ti ti-ban" style="color:var(--orange)"></i>';
+      const cancelBtn = op.state === 'pending'
+        ? `<button class="op-cancel" onclick="opManager.cancel('${id}')" title="Cancel">✕</button>`
+        : `<button class="op-cancel" onclick="opManager.dismiss('${id}')" title="Dismiss">✕</button>`;
+      return `<div class="op-item op-${op.state}">
+        ${ic}<span class="op-label">${op.label}</span>${cancelBtn}
+      </div>`;
+    }).join('');
+  }
+
+  function start(label) {
+    const id = String(++_seq);
+    const ctrl = new AbortController();
+    _ops[id] = { label, state: 'pending', ctrl };
+    _render();
+    return { id, signal: ctrl.signal };
+  }
+
+  function done(id)  { if (_ops[id]) { _ops[id].state = 'done';  _render(); setTimeout(() => dismiss(id), 2500); } }
+  function error(id, msg) {
+    if (_ops[id]) {
+      _ops[id].state = 'error';
+      _ops[id].label = msg || _ops[id].label;
+      _render();
+      setTimeout(() => dismiss(id), 5000);
+    }
+  }
+  function cancel(id) {
+    if (_ops[id]) { _ops[id].ctrl.abort(); _ops[id].state = 'cancelled'; _render(); setTimeout(() => dismiss(id), 1500); }
+  }
+  function dismiss(id) { delete _ops[id]; _render(); }
+
+  return { start, done, error, cancel, dismiss };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════
+// Resource Editor (CodeMirror YAML)
+// ═══════════════════════════════════════════════════════════════════════
+let _editorCM = null;
+let _editorKind = '', _editorNs = '', _editorName = '';
+
+function _initCM() {
+  if (_editorCM) return;
+  _editorCM = CodeMirror.fromTextArea(document.getElementById('editorTextarea'), {
+    mode: 'yaml', theme: 'dracula', lineNumbers: true,
+    tabSize: 2, indentWithTabs: false,
+    lineWrapping: false, autofocus: true,
+    extraKeys: {
+      'Ctrl-Enter': applyResource,
+      'Cmd-Enter':  applyResource,
+      Tab: cm => cm.execCommand('insertSoftTab'),
+    }
+  });
+  _editorCM.setSize('100%', '520px');
+}
+
+function openEditor(kind, ns, name) {
+  document.getElementById('editorModal').style.display = 'flex';
+  _initCM();
+  _editorKind = kind || ''; _editorNs = ns || ''; _editorName = name || '';
+  setEditorMsg('');
+
+  if (kind && name) {
+    document.getElementById('editorTitle').textContent = `Edit ${kind}: ${name}`;
+    document.getElementById('editorBadge').textContent = ns || 'cluster-scoped';
+    document.getElementById('editorBadge').style.display = 'inline';
+    _loadResourceYaml(kind, ns || '_', name);
+    _loadDocs(kind);
+  } else {
+    document.getElementById('editorTitle').textContent = 'Resource Editor';
+    document.getElementById('editorBadge').style.display = 'none';
+    document.getElementById('docsLink').style.display = 'none';
+    _editorCM.setValue('apiVersion: v1\nkind: \nmetadata:\n  name: \n  namespace: \nspec:\n');
+    _editorCM.refresh();
+  }
+}
+
+function _loadResourceYaml(kind, ns, name) {
+  setEditorMsg('Loading…', 'info');
+  fetch(`/resources/${kind}/${ns}/${name}/yaml`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { setEditorMsg(d.error, 'err'); return; }
+      _editorCM.setValue(d.yaml || '');
+      _editorCM.refresh();
+      setEditorMsg('');
+    })
+    .catch(e => setEditorMsg('Failed to load: ' + e, 'err'));
+}
+
+function _loadDocs(kind) {
+  fetch(`/resources/docs/${kind}`)
+    .then(r => r.json())
+    .then(d => {
+      const link = document.getElementById('docsLink');
+      link.href = d.url; link.style.display = '';
+    })
+    .catch(() => {});
+}
+
+function closeEditor() {
+  document.getElementById('editorModal').style.display = 'none';
+}
+
+function setEditorMsg(msg, cls) {
+  const el = document.getElementById('editorMsg');
+  el.textContent = msg;
+  el.className = 'editor-msg' + (cls ? ` editor-msg-${cls}` : '');
+}
+
+async function applyResource() {
+  const yaml = _editorCM ? _editorCM.getValue() : '';
+  if (!yaml.trim()) { setEditorMsg('Nothing to apply.', 'err'); return; }
+
+  const btn = document.getElementById('editorApplyBtn');
+  btn.disabled = true;
+  setEditorMsg('Applying…', 'info');
+
+  const op = opManager.start('Applying resource…');
+  try {
+    const resp = await fetch('/resources/apply', {
+      method: 'POST', signal: op.signal,
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf() },
+      body: JSON.stringify({ yaml }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      setEditorMsg(`✓ ${data.action}: ${data.kind}/${data.name}`, 'ok');
+      opManager.done(op.id);
+      setTimeout(() => closeEditor(), 1200);
+    } else {
+      setEditorMsg(data.error || 'Apply failed', 'err');
+      opManager.error(op.id, data.error || 'Apply failed');
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      setEditorMsg('Cancelled.', '');
+    } else {
+      setEditorMsg('Network error: ' + e, 'err');
+      opManager.error(op.id, 'Network error');
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Expose deleteResource for use in page templates
+async function deleteResource(kind, ns, name, redirectUrl) {
+  if (!confirm(`Delete ${kind}/${name}?`)) return;
+  const op = opManager.start(`Deleting ${kind}/${name}…`);
+  try {
+    const resp = await fetch(`/resources/${kind}/${ns || '_'}/${name}/delete`, {
+      method: 'POST', signal: op.signal,
+      headers: { 'X-CSRF-Token': _csrf() },
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      opManager.done(op.id);
+      if (redirectUrl) setTimeout(() => location.href = redirectUrl, 400);
+      else location.reload();
+    } else {
+      opManager.error(op.id, data.error || 'Delete failed');
+      alert(data.error || 'Delete failed');
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') { opManager.error(op.id, 'Error'); alert(String(e)); }
+  }
+}
+</script>
+</body>
+</html>

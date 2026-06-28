@@ -1,0 +1,16 @@
+flask>=3.0
+python-dotenv>=1.0
+kubernetes>=29.0
+PyJWT>=2.8
+requests>=2.31
+gunicorn>=21.0
+gevent>=23.0
+flask-sock>=0.7
+simple-websocket>=1.0
+websocket-client>=1.7
+cachetools>=5.3
+pip>=26.1.2
+opentelemetry-sdk>=1.24
+opentelemetry-instrumentation-flask>=0.45b0
+opentelemetry-instrumentation-requests>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24

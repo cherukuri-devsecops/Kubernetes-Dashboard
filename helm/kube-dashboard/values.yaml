@@ -1,0 +1,230 @@
+# ── Global ────────────────────────────────────────────────────────────────────
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+  imagePullPolicy: IfNotPresent
+
+# ── UI Service (Flask) ────────────────────────────────────────────────────────
+uiService:
+  enabled: true
+  image:
+    repository: cherukuri1991/kube-dashboard-ui
+    tag: latest
+  replicaCount: 1
+  port: 5000
+  service:
+    type: ClusterIP
+    port: 5000
+  env:
+    logLevel: INFO
+    clusterScope: local
+    dbPollerEnabled: "1"
+    eventPollInterval: "30"
+    metricPollInterval: "60"
+    sessionCookieSecure: "0"
+    trustProxyHeaders: "0"
+    otelServiceName: kube-dashboard-ui
+  # Reference to the shared secret for sensitive values
+  secretName: kube-dashboard-app-secret
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# ── Backend Service (FastAPI) ─────────────────────────────────────────────────
+backendService:
+  enabled: true
+  image:
+    repository: cherukuri1991/kube-dashboard-backend
+    tag: latest
+  replicaCount: 1
+  port: 8000
+  service:
+    type: ClusterIP
+    port: 8000
+  env:
+    logLevel: INFO
+    clusterScope: local
+    otelServiceName: kube-dashboard-backend
+  secretName: kube-dashboard-app-secret
+  # ClusterRole rules — backend reads K8s objects via in-cluster ServiceAccount
+  rbac:
+    create: true
+    rules:
+      - apiGroups: [""]
+        resources:
+          - pods
+          - pods/log
+          - services
+          - endpoints
+          - nodes
+          - namespaces
+          - events
+          - configmaps
+          - persistentvolumes
+          - persistentvolumeclaims
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["apps"]
+        resources:
+          - deployments
+          - daemonsets
+          - replicasets
+          - statefulsets
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["batch"]
+        resources: ["jobs", "cronjobs"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["networking.k8s.io"]
+        resources: ["ingresses"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["metrics.k8s.io"]
+        resources: ["pods", "nodes"]
+        verbs: ["get", "list"]
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# ── NFS ───────────────────────────────────────────────────────────────────────
+nfs:
+  # NFS server hostname or IP — required when persistence.storageClass is not set
+  server: ""
+  # Sub-paths under basePath used for each volume
+  sqlitePath: /data/nfs/dashboard/sqlite
+  prometheusPath: /data/nfs/dashboard/prometheus
+
+# ── Shared SQLite PVC ─────────────────────────────────────────────────────────
+sqlite:
+  persistence:
+    enabled: true
+    storageClass: ""      # leave empty to use static NFS PV
+    accessMode: ReadWriteMany
+    size: 1Gi
+    existingClaim: ""     # set to bypass PV/PVC creation entirely
+
+# ── Loki ──────────────────────────────────────────────────────────────────────
+loki:
+  enabled: true
+  image:
+    repository: grafana/loki
+    tag: "3.3.2"
+  port: 3100
+  service:
+    type: ClusterIP
+    port: 3100
+  # S3 backend credentials — set via --set or an external secret
+  s3:
+    endpoint: ""
+    bucket: ""
+    region: us-east-1
+    accessKeyId: ""
+    secretAccessKey: ""
+  # Use existing secret instead of creating one from values above
+  existingSecret: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# ── Prometheus ────────────────────────────────────────────────────────────────
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: "v2.51.0"
+  port: 9090
+  service:
+    type: ClusterIP
+    port: 9090
+  retention: 15d
+  persistence:
+    enabled: true
+    storageClass: ""      # leave empty to use static NFS PV
+    accessMode: ReadWriteMany
+    size: 10Gi
+    existingClaim: ""     # set to bypass PV/PVC creation entirely
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+# ── Tempo ─────────────────────────────────────────────────────────────────────
+tempo:
+  enabled: true
+  image:
+    repository: grafana/tempo
+    tag: "2.4.1"
+  httpPort: 3200
+  otlpGrpcPort: 4317
+  service:
+    type: ClusterIP
+    httpPort: 3200
+    otlpGrpcPort: 4317
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: kube-dashboard.local
+  tls: []
+
+# ── Application secrets (set via --set or external secret manager) ────────────
+# These populate the kube-dashboard-app-secret Secret
+secrets:
+  secretKey: "dev-secret-change-me"
+  authJwtSecret: ""
+  authServiceUrl: ""
+  oauthRedirectUri: ""
+  allowedEmails: ""

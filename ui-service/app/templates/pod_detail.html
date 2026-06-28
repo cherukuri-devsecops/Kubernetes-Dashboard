@@ -1,0 +1,699 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div class="breadcrumb"><a href="/pods">Pods</a> › {{ pod.metadata.namespace }}</div>
+  <h1>{{ pod.metadata.name }}</h1>
+  <div class="sub">{{ pod.metadata.namespace }} / pod</div>
+  <div class="actions">
+    {% if can('get', 'pods', pod.metadata.namespace) %}
+    <button class="btn" onclick="openEditor('Pod','{{ pod.metadata.namespace }}','{{ pod.metadata.name }}')"
+            title="Edit YAML in resource editor">
+      <i class="ti ti-code"></i> Edit YAML
+    </button>
+    {% endif %}
+    {% if can('get', 'pods', pod.metadata.namespace) %}
+    <a href="/pods/{{ pod.metadata.namespace }}/{{ pod.metadata.name }}/shell" class="btn">
+      <i class="ti ti-terminal-2"></i> Shell
+    </a>
+    {% endif %}
+    {% if can('delete', 'pods', pod.metadata.namespace) %}
+    <button class="btn danger"
+            onclick="deleteResource('Pod','{{ pod.metadata.namespace }}','{{ pod.metadata.name }}','/pods?ns={{ pod.metadata.namespace }}')">
+      <i class="ti ti-trash"></i> Delete pod
+    </button>
+    {% else %}
+    <span class="btn danger rbac-denied" title="You do not have permission to delete pods">
+      <i class="ti ti-trash"></i> Delete pod
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Meta -->
+{% set ph = pod.status.phase or 'Unknown' %}
+{% set rc, tc = ready_count(pod) %}
+<div class="meta-grid">
+  <div class="meta-cell">
+    <div class="meta-key">Status</div>
+    <div class="meta-val"><span class="dot {{ phase_cls(ph) }}"></span>{{ ph }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Ready</div>
+    <div class="meta-val ready"><span class="r">{{ rc }}</span><span class="s">/{{ tc }}</span></div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Restarts</div>
+    <div class="meta-val">{{ restarts(pod) }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Node</div>
+    <div class="meta-val">{{ pod.spec.node_name or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Pod IP</div>
+    <div class="meta-val">{{ pod.status.pod_ip or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Host IP</div>
+    <div class="meta-val">{{ pod.status.host_ip or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Service account</div>
+    <div class="meta-val">{{ pod.spec.service_account_name or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Age</div>
+    <div class="meta-val">{{ age(pod.metadata.creation_timestamp) }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">QoS class</div>
+    <div class="meta-val">{{ pod.status.qos_class or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Priority</div>
+    <div class="meta-val">{{ pod.spec.priority if pod.spec.priority is not none else '—' }}
+      {% if pod.spec.priority_class_name %}<span style="font-size:11px;color:var(--faint)">({{ pod.spec.priority_class_name }})</span>{% endif %}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Restart policy</div>
+    <div class="meta-val">{{ pod.spec.restart_policy or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">DNS policy</div>
+    <div class="meta-val">{{ pod.spec.dns_policy or '—' }}</div>
+  </div>
+  {% if owner %}
+  <div class="meta-cell">
+    <div class="meta-key">Controlled by</div>
+    <div class="meta-val" style="font-size:12px">
+      {{ owner.controller_kind }} / <strong>{{ owner.controller_name }}</strong>
+      {% if owner.controller_kind != owner.kind %}
+      <div style="font-size:11px;color:var(--faint)">via {{ owner.kind }}/{{ owner.name }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Resource Metrics -->
+{% if ctr_metrics %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title"><i class="ti ti-chart-bar"></i> Resource Usage
+    <span style="font-size:11px;color:var(--faint);font-weight:400;margin-left:6px">live · metrics-server</span>
+  </div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px">
+
+  <!-- CPU gauge -->
+  {% set cpu_color = 'var(--err,#e05252)' if cpu_bar_pct > 85 else 'var(--warn,#e0a232)' if cpu_bar_pct > 70 else 'var(--accent,#5b8dee)' %}
+  {% set circ = 289.03 %}
+  <div style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);border-radius:8px;
+              padding:18px 12px 14px;display:flex;flex-direction:column;align-items:center">
+    <div style="font-size:12px;color:var(--faint);margin-bottom:10px"><i class="ti ti-cpu"></i> CPU</div>
+    <svg width="110" height="110" viewBox="0 0 110 110">
+      <circle cx="55" cy="55" r="46" fill="none" stroke="var(--border,#1e2028)" stroke-width="9"/>
+      <circle cx="55" cy="55" r="46" fill="none"
+              stroke="{{ cpu_color }}" stroke-width="9"
+              stroke-dasharray="{{ circ }}"
+              stroke-dashoffset="{{ (circ * (100 - cpu_bar_pct) / 100) | round(2) }}"
+              stroke-linecap="round"
+              transform="rotate(-90 55 55)"/>
+      <text x="55" y="50" text-anchor="middle" dominant-baseline="middle"
+            fill="var(--fg,#e6e6e6)" font-size="13" font-weight="700">{{ fmt_cpu(pod_cpu_m) }}</text>
+      {% if pod_cpu_lim_m %}
+      <text x="55" y="67" text-anchor="middle" fill="{{ cpu_color }}" font-size="11" font-weight="600">{{ cpu_bar_pct }}%</text>
+      {% else %}
+      <text x="55" y="67" text-anchor="middle" fill="var(--faint,#6b7280)" font-size="10">no limit</text>
+      {% endif %}
+    </svg>
+    {% if pod_cpu_lim_m %}
+    <div style="font-size:11px;color:var(--faint);margin-top:6px;text-align:center">of {{ fmt_cpu(pod_cpu_lim_m) }} limit</div>
+    {% endif %}
+  </div>
+
+  <!-- Memory gauge -->
+  {% set mem_color = 'var(--err,#e05252)' if mem_bar_pct > 85 else 'var(--warn,#e0a232)' if mem_bar_pct > 70 else 'var(--teal,#2dd4bf)' %}
+  <div style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);border-radius:8px;
+              padding:18px 12px 14px;display:flex;flex-direction:column;align-items:center">
+    <div style="font-size:12px;color:var(--faint);margin-bottom:10px"><i class="ti ti-device-floppy"></i> Memory</div>
+    <svg width="110" height="110" viewBox="0 0 110 110">
+      <circle cx="55" cy="55" r="46" fill="none" stroke="var(--border,#1e2028)" stroke-width="9"/>
+      <circle cx="55" cy="55" r="46" fill="none"
+              stroke="{{ mem_color }}" stroke-width="9"
+              stroke-dasharray="{{ circ }}"
+              stroke-dashoffset="{{ (circ * (100 - mem_bar_pct) / 100) | round(2) }}"
+              stroke-linecap="round"
+              transform="rotate(-90 55 55)"/>
+      <text x="55" y="50" text-anchor="middle" dominant-baseline="middle"
+            fill="var(--fg,#e6e6e6)" font-size="13" font-weight="700">{{ fmt_mem(pod_mem_b) }}</text>
+      {% if pod_mem_lim_b %}
+      <text x="55" y="67" text-anchor="middle" fill="{{ mem_color }}" font-size="11" font-weight="600">{{ mem_bar_pct }}%</text>
+      {% else %}
+      <text x="55" y="67" text-anchor="middle" fill="var(--faint,#6b7280)" font-size="10">no limit</text>
+      {% endif %}
+    </svg>
+    {% if pod_mem_lim_b %}
+    <div style="font-size:11px;color:var(--faint);margin-top:6px;text-align:center">of {{ fmt_mem(pod_mem_lim_b) }} limit</div>
+    {% endif %}
+  </div>
+
+  <!-- Per-container breakdown (only when multiple containers) -->
+  {% if ctr_metrics|length > 1 %}
+  <div style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);border-radius:8px;
+              padding:14px;grid-column:1/-1">
+    <div style="font-size:12px;color:var(--faint);margin-bottom:8px">Per-container breakdown</div>
+    {% for c in pod.spec.containers %}
+    {% set m = ctr_metrics.get(c.name) %}
+    {% if m %}
+    <div style="display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;
+                padding:5px 0;border-top:1px solid var(--border,#252830);font-size:12px">
+      <div style="font-family:var(--mono)">{{ c.name }}</div>
+      <div><span style="color:var(--faint);margin-right:4px">CPU</span><strong style="color:var(--accent)">{{ fmt_cpu(m.cpu_m) }}</strong></div>
+      <div><span style="color:var(--faint);margin-right:4px">Mem</span><strong style="color:var(--teal,#2dd4bf)">{{ fmt_mem(m.mem_b) }}</strong></div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
+
+<!-- Conditions -->
+{% if pod.status.conditions %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Conditions</div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Type</th><th>Status</th><th>Last transition</th><th>Reason</th><th>Message</th></tr></thead>
+  <tbody>
+  {% for c in pod.status.conditions %}
+  <tr>
+    <td><strong>{{ c.type }}</strong></td>
+    <td><span class="badge {{ 'ok' if c.status == 'True' else 'err' if c.status == 'False' else 'warn' }}">{{ c.status }}</span></td>
+    <td style="color:var(--faint);font-size:12px">{{ age(c.last_transition_time) if c.last_transition_time else '—' }}</td>
+    <td style="font-size:12px">{{ c.reason or '—' }}</td>
+    <td style="font-size:12px;color:var(--faint)">{{ c.message or '' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Containers -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Containers</div>
+</div>
+<div class="ctr-list" style="margin-bottom:24px">
+{% macro probe_str(p) -%}
+  {%- if not p -%}—
+  {%- elif p.http_get -%}HTTP {{ p.http_get.scheme or 'HTTP' }} {{ p.http_get.path or '/' }}:{{ p.http_get.port }}
+  {%- elif p.tcp_socket -%}TCP :{{ p.tcp_socket.port }}
+  {%- elif p._exec -%}exec {{ p._exec.command | join(' ') if p._exec.command else '' }}
+  {%- else -%}configured{%- endif -%}
+{%- endmacro %}
+{% for c in pod.spec.containers %}
+{% set cs = namespace(ready=False, state='unknown', restarts=0, image_id='', started_at=None, reason='') %}
+{% for s in (pod.status.container_statuses or []) %}
+  {% if s.name == c.name %}
+    {% set cs = namespace(ready=s.ready, restarts=s.restart_count,
+      state='running' if s.state.running else 'waiting' if s.state.waiting else 'terminated',
+      image_id=s.image_id or '',
+      started_at=s.state.running.started_at if s.state.running else None,
+      reason=(s.state.waiting.reason if s.state.waiting else (s.state.terminated.reason if s.state.terminated else '')) or '') %}
+  {% endif %}
+{% endfor %}
+{% set m = ctr_metrics.get(c.name) %}
+<div class="ctr-card" style="flex-direction:column;align-items:stretch">
+  <div style="display:flex;align-items:flex-start;gap:10px">
+    <span class="dot {{ 'ok' if cs.ready else 'err' }}"></span>
+    <div class="ctr-info" style="flex:1">
+      <div class="ctr-name">{{ c.name }}</div>
+      <div class="ctr-image">{{ c.image }}</div>
+      <div class="ctr-meta">
+        state: <strong>{{ cs.state }}</strong>{% if cs.reason %} ({{ cs.reason }}){% endif %}
+        &nbsp;·&nbsp; restarts: {{ cs.restarts }}
+        {% if cs.started_at %}&nbsp;·&nbsp; started: {{ age(cs.started_at) }} ago{% endif %}
+        &nbsp;·&nbsp; pullPolicy: {{ c.image_pull_policy or '—' }}
+      </div>
+    </div>
+  </div>
+
+  <div class="ctr-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px;font-size:12px">
+    <!-- Resources -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Resources</div>
+      <div>requests: cpu {{ (c.resources.requests or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.requests or {}).get('memory','—') if c.resources else '—' }}</div>
+      <div>limits: cpu {{ (c.resources.limits or {}).get('cpu','—') if c.resources else '—' }},
+        mem {{ (c.resources.limits or {}).get('memory','—') if c.resources else '—' }}</div>
+      {% if m %}
+      <div style="color:var(--accent);margin-top:4px">live: cpu {{ fmt_cpu(m.cpu_m) }},
+        mem {{ fmt_mem(m.mem_b) }}</div>
+      {% endif %}
+    </div>
+
+    <!-- Ports -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Ports</div>
+      {% if c.ports %}
+        {% for p in c.ports %}
+        <div>{{ p.name or '—' }}: {{ p.container_port }}/{{ p.protocol or 'TCP' }}</div>
+        {% endfor %}
+      {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+    </div>
+
+    <!-- Probes -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Probes</div>
+      <div>liveness: {{ probe_str(c.liveness_probe) }}</div>
+      <div>readiness: {{ probe_str(c.readiness_probe) }}</div>
+      <div>startup: {{ probe_str(c.startup_probe) }}</div>
+    </div>
+
+    <!-- Mounts -->
+    <div>
+      <div style="color:var(--faint);margin-bottom:4px">Mounts</div>
+      {% if c.volume_mounts %}
+        {% for vm in c.volume_mounts %}
+        <div style="font-family:var(--mono);font-size:11px">{{ vm.mount_path }} ← {{ vm.name }}{% if vm.read_only %} (ro){% endif %}</div>
+        {% endfor %}
+      {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+    </div>
+
+    <!-- Command / Args -->
+    {% if c.command or c.args %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Command / Args</div>
+      {% if c.command %}<div style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+      {% if c.args %}<div style="font-family:var(--mono);font-size:11px">args: {{ c.args | join(' ') }}</div>{% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Env -->
+    {% if c.env or c.env_from %}
+    <div style="grid-column:1/-1">
+      <div style="color:var(--faint);margin-bottom:4px">Env
+        ({{ (c.env|length if c.env else 0) }} vars{% if c.env_from %}, {{ c.env_from|length }} sources{% endif %})</div>
+      {% for e in (c.env or [])[:12] %}
+      <div style="font-family:var(--mono);font-size:11px">
+        {{ e.name }} = {% if e.value %}{{ e.value }}{% elif e.value_from %}<span style="color:var(--faint)">[
+          {%- if e.value_from.config_map_key_ref %}cm:{{ e.value_from.config_map_key_ref.name }}/{{ e.value_from.config_map_key_ref.key }}
+          {%- elif e.value_from.secret_key_ref %}secret:{{ e.value_from.secret_key_ref.name }}/{{ e.value_from.secret_key_ref.key }}
+          {%- elif e.value_from.field_ref %}field:{{ e.value_from.field_ref.field_path }}
+          {%- elif e.value_from.resource_field_ref %}resource:{{ e.value_from.resource_field_ref.resource }}
+          {%- else %}ref{%- endif -%}
+        ]</span>{% endif %}
+      </div>
+      {% endfor %}
+      {% if c.env and c.env|length > 12 %}
+      <div style="color:var(--faint);font-size:11px">… and {{ c.env|length - 12 }} more</div>
+      {% endif %}
+      {% for ef in (c.env_from or []) %}
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted)">
+        envFrom: {% if ef.config_map_ref %}configMap/{{ ef.config_map_ref.name }}
+        {%- elif ef.secret_ref %}secret/{{ ef.secret_ref.name }}{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% if pod.spec.init_containers %}
+{% for c in pod.spec.init_containers %}
+<div class="ctr-card" style="border-style:dashed;opacity:.85">
+  <span class="dot gray"></span>
+  <div class="ctr-info">
+    <div class="ctr-name">{{ c.name }} <span style="color:var(--faint);font-size:11px">(init)</span></div>
+    <div class="ctr-image">{{ c.image }}</div>
+    {% if c.command %}<div class="ctr-meta" style="font-family:var(--mono);font-size:11px">cmd: {{ c.command | join(' ') }}</div>{% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+</div>
+
+<!-- Volumes -->
+{% if pod.spec.volumes %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Volumes <span class="cnt">{{ pod.spec.volumes|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Type</th><th>Source</th></tr></thead>
+  <tbody>
+  {% for v in pod.spec.volumes %}
+  {% set src = namespace(kind='—', detail='') %}
+  {% if v.config_map %}{% set src = namespace(kind='configMap', detail=v.config_map.name) %}
+  {% elif v.secret %}{% set src = namespace(kind='secret', detail=v.secret.secret_name) %}
+  {% elif v.persistent_volume_claim %}{% set src = namespace(kind='pvc', detail=v.persistent_volume_claim.claim_name) %}
+  {% elif v.empty_dir %}{% set src = namespace(kind='emptyDir', detail=(v.empty_dir.medium or '')) %}
+  {% elif v.host_path %}{% set src = namespace(kind='hostPath', detail=v.host_path.path) %}
+  {% elif v.projected %}{% set src = namespace(kind='projected', detail=(v.projected.sources|length ~ ' source(s)') if v.projected.sources else '') %}
+  {% elif v.downward_api %}{% set src = namespace(kind='downwardAPI', detail='') %}
+  {% elif v.nfs %}{% set src = namespace(kind='nfs', detail=v.nfs.server ~ ':' ~ v.nfs.path) %}
+  {% elif v.csi %}{% set src = namespace(kind='csi', detail=v.csi.driver) %}
+  {% endif %}
+  <tr>
+    <td><strong style="font-size:12px">{{ v.name }}</strong></td>
+    <td style="font-size:12px"><span class="badge gray">{{ src.kind }}</span></td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint)">{{ src.detail or '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Scheduling: node selector, tolerations, affinity hint -->
+{% if pod.spec.node_selector or pod.spec.tolerations or pod.spec.affinity %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Scheduling</div></div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:20px;font-size:12px">
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Node selector</div>
+    {% if pod.spec.node_selector %}
+      <div class="tags">{% for k,v in pod.spec.node_selector.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Tolerations
+      ({{ pod.spec.tolerations|length if pod.spec.tolerations else 0 }})</div>
+    {% if pod.spec.tolerations %}
+      {% for t in pod.spec.tolerations[:10] %}
+      <div style="font-family:var(--mono);font-size:11px">
+        {{ t.key or '*' }}{% if t.operator %} {{ t.operator }}{% endif %}{% if t.value %} {{ t.value }}{% endif %}
+        {% if t.effect %} :{{ t.effect }}{% endif %}{% if t.toleration_seconds is not none %} ({{ t.toleration_seconds }}s){% endif %}
+      </div>
+      {% endfor %}
+      {% if pod.spec.tolerations|length > 10 %}
+      <div style="color:var(--faint);font-size:11px">… and {{ pod.spec.tolerations|length - 10 }} more</div>
+      {% endif %}
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Affinity</div>
+    <div style="font-size:11px">
+      {% if pod.spec.affinity %}
+        {% if pod.spec.affinity.node_affinity %}<div>nodeAffinity ✓</div>{% endif %}
+        {% if pod.spec.affinity.pod_affinity %}<div>podAffinity ✓</div>{% endif %}
+        {% if pod.spec.affinity.pod_anti_affinity %}<div>podAntiAffinity ✓</div>{% endif %}
+        <div style="color:var(--faint);margin-top:4px">see YAML for full rules</div>
+      {% else %}<span style="color:var(--faint)">—</span>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- K8s annotations -->
+{% if pod.metadata.annotations %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Annotations <span class="cnt">{{ pod.metadata.annotations|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:30%">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in pod.metadata.annotations.items() %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--muted);vertical-align:top">{{ k }}</td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:pre-wrap;word-break:break-all">{{ v }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Logs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Logs</div>
+</div>
+{% set stream_url = "/pods/" ~ pod.metadata.namespace ~ "/" ~ pod.metadata.name ~ "/logs/stream?container=" ~ sel_ctr ~ "&tail=" ~ tail ~ ("&previous=1" if previous else "") %}
+<form class="log-toolbar" method="get">
+  <label>Container</label>
+  <select name="container">
+    {% for c in all_containers %}
+    <option value="{{ c }}" {{ 'selected' if c == sel_ctr }}>
+      {{ c }}{{ ' (init)' if c in init_containers else '' }}
+    </option>
+    {% endfor %}
+  </select>
+  <label>Tail</label>
+  <input type="number" name="tail" value="{{ tail }}" min="50" max="50000" style="width:90px">
+  <label><input type="checkbox" name="previous" value="1" {{ 'checked' if previous }}> Previous</label>
+  <button type="submit" class="btn"><i class="ti ti-refresh"></i> Reload</button>
+  <button type="button" class="btn" id="liveBtn"><i class="ti ti-player-play"></i> Live tail</button>
+  <button type="button" class="btn danger" id="stopBtn" style="display:none">
+    <i class="ti ti-player-stop"></i> Stop
+  </button>
+  <button type="button" class="btn" id="clearBtn"><i class="ti ti-eraser"></i> Clear</button>
+</form>
+
+<div class="logbox" id="logbox">
+{% set ns = namespace(has_lines=false) %}
+{% for raw_line in logs.splitlines() %}
+{% if raw_line.strip() %}
+  {% set ns.has_lines = true %}
+  {% set cls = log_cls(raw_line) %}
+  {% set lvl = log_level_badge(raw_line) %}
+  {% if raw_line[0:1].isdigit() and 'T' in raw_line[:11] and ' ' in raw_line %}
+    {% set parts = raw_line.split(' ', 1) %}
+    {% set ts_fmt = fmt_log_ts(parts[0]) %}
+    <div class="log-line {{ cls }}">
+      <span class="log-ts">{{ ts_fmt }}</span>
+      {% if lvl %}<span class="log-lvl log-lvl-{{ lvl|lower }}">{{ lvl }}</span>{% endif %}
+      <span class="log-msg">{{ parts[1] }}</span>
+    </div>
+  {% else %}
+    <div class="log-line {{ cls }}">
+      <span class="log-ts">—</span>
+      {% if lvl %}<span class="log-lvl log-lvl-{{ lvl|lower }}">{{ lvl }}</span>{% endif %}
+      <span class="log-msg">{{ raw_line }}</span>
+    </div>
+  {% endif %}
+{% endif %}
+{% endfor %}
+{% if not ns.has_lines %}
+<div class="log-line"><span class="log-msg" style="color:var(--faint)">(no logs)</span></div>
+{% endif %}
+</div>
+
+<!-- Events for this pod -->
+{% if events %}
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Events <span class="cnt">{{ events|length }}</span></div>
+</div>
+<div class="table-wrap" style="padding:0 14px">
+  <div class="ev-list">
+  {% for e in events %}
+  <div class="ev-row">
+    <span class="ev-type {{ e.type }}">{{ e.type }}</span>
+    <span class="ev-reason">{{ e.reason }}</span>
+    <span class="ev-msg" title="{{ e.message }}">{{ e.message }}</span>
+    <span class="ev-count">×{{ e.count }}</span>
+    <span class="ev-age">{{ age(e.last_timestamp) }}</span>
+  </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Lifecycle history (DB) -->
+{% if lifecycle %}
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Lifecycle <span class="cnt">{{ lifecycle|length }}</span>
+    <span style="font-size:11px;color:var(--faint);margin-left:6px">restarts · OOMs · exits over time</span>
+  </div>
+</div>
+<div class="table-wrap" style="padding:0 14px">
+  <table class="datatable" style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">When</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Container</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Type</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Reason</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Exit</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Restarts</th>
+      <th style="text-align:left;padding:6px 8px;color:var(--faint)">Message</th>
+    </tr></thead>
+    <tbody>
+    {% for l in lifecycle %}
+    <tr style="border-top:1px solid var(--border,#1a1d24)">
+      <td style="padding:6px 8px;color:var(--faint);font-family:Menlo,monospace">{{ l.ts.strftime('%m-%d %H:%M:%S') if l.ts else '—' }}</td>
+      <td style="padding:6px 8px;font-family:Menlo,monospace">{{ l.container }}</td>
+      <td style="padding:6px 8px"><span class="badge {{ 'err' if l.event_type in ['oom','crash'] else 'warn' }}">{{ l.event_type }}</span></td>
+      <td style="padding:6px 8px">{{ l.reason or '—' }}</td>
+      <td style="padding:6px 8px;font-family:Menlo,monospace">{{ l.exit_code if l.exit_code is not none else '—' }}</td>
+      <td style="padding:6px 8px;text-align:right">{{ l.restart_count }}</td>
+      <td style="padding:6px 8px;color:var(--faint)">{{ l.message or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Annotations (DB) -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title"><i class="ti ti-notes"></i> Notes <span class="cnt">{{ annotations|length }}</span></div>
+</div>
+<div style="padding:0 14px">
+  {% for a in annotations %}
+  <div style="background:var(--bg-2,#11141a);border:1px solid var(--border,#252830);
+              border-radius:6px;padding:10px 12px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;
+                font-size:11px;color:var(--faint)">
+      <span>
+        {% if a.pinned %}<i class="ti ti-pin"></i>{% endif %}
+        <strong>{{ a.author_email or 'unknown' }}</strong>
+        · {{ a.updated_at.strftime('%Y-%m-%d %H:%M') if a.updated_at else '' }}
+      </span>
+      <form method="post" action="/annotations/delete/{{ a.id }}" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+        <button type="submit" title="Delete" style="background:none;border:none;color:var(--faint);cursor:pointer;font-size:14px">×</button>
+      </form>
+    </div>
+    <div style="white-space:pre-wrap;font-size:13px;color:var(--fg)">{{ a.body }}</div>
+  </div>
+  {% endfor %}
+
+  <form method="post" action="/annotations/pod/{{ pod.metadata.namespace }}/{{ pod.metadata.name }}"
+        style="display:flex;gap:8px;align-items:flex-start;margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+    <textarea name="body" rows="2" placeholder="Add a note — runbook link, incident context, do-not-delete reason…"
+              style="flex:1;font-size:13px;padding:8px 10px;background:var(--bg-2,#0f1115);
+                     color:var(--fg,#e6e6e6);border:1px solid var(--border,#252830);
+                     border-radius:6px;resize:vertical"></textarea>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <button class="btn primary" type="submit" style="height:34px;padding:0 14px"><i class="ti ti-plus"></i> Add</button>
+      <label style="font-size:11px;color:var(--faint)">
+        <input type="checkbox" name="pinned" value="1"> Pin
+      </label>
+    </div>
+  </form>
+</div>
+
+<!-- Labels -->
+{% if pod.metadata.labels %}
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Labels</div>
+</div>
+<div class="tags">
+{% for k,v in pod.metadata.labels.items() %}
+<span class="tag">{{ k }}={{ v }}</span>
+{% endfor %}
+</div>
+{% endif %}
+
+<!-- Sibling pods (same owner) -->
+{% if siblings %}
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Sibling pods <span class="cnt">{{ siblings|length }}</span>
+    <span style="font-size:11px;color:var(--faint);margin-left:6px">share owner {{ owner.kind }}/{{ owner.name }}</span>
+  </div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Status</th><th>Ready</th><th>Restarts</th><th>Node</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for p in siblings %}
+  {% set src, dst = ready_count(p) %}
+  {% set sph = p.status.phase or 'Unknown' %}
+  <tr>
+    <td><a class="row-link" href="/pods/{{ p.metadata.namespace }}/{{ p.metadata.name }}">{{ p.metadata.name }}</a></td>
+    <td><span class="dot {{ phase_cls(sph) }}"></span><span style="font-size:12px">{{ sph }}</span></td>
+    <td><span class="ready"><span class="r">{{ src }}</span><span class="s">/{{ dst }}</span></span></td>
+    <td>{{ restarts(p) }}</td>
+    <td style="color:var(--faint);font-size:12px">{{ p.spec.node_name or '—' }}</td>
+    <td style="color:var(--faint)">{{ age(p.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Raw manifest (YAML) -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Manifest</div>
+</div>
+<details style="margin-bottom:24px;border:1px solid var(--border,#252830);border-radius:6px;background:var(--bg-2,#11141a)">
+  <summary style="padding:10px 14px;cursor:pointer;font-size:13px;color:var(--muted);user-select:none">
+    <i class="ti ti-code"></i> Show YAML
+    <button type="button" id="copyYaml" class="btn" style="float:right;padding:2px 10px;font-size:11px">
+      <i class="ti ti-copy"></i> Copy
+    </button>
+  </summary>
+  <pre id="manifestYaml" style="margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--fg);max-height:600px">{{ manifest_yaml }}</pre>
+</details>
+
+<script>
+const box   = document.getElementById('logbox');
+const lBtn  = document.getElementById('liveBtn');
+const sBtn  = document.getElementById('stopBtn');
+const cBtn  = document.getElementById('clearBtn');
+box.scrollTop = box.scrollHeight;
+let es = null;
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+    const dd = String(d.getUTCDate()).padStart(2,'0');
+    const hh = String(d.getUTCHours()).padStart(2,'0');
+    const mi = String(d.getUTCMinutes()).padStart(2,'0');
+    const ss = String(d.getUTCSeconds()).padStart(2,'0');
+    return `${mm}-${dd} ${hh}:${mi}:${ss}`;
+  } catch(e) { return iso.slice(0,19).replace('T',' '); }
+}
+function lvlBadge(msg) {
+  const lo = msg.toLowerCase();
+  if (/error|fatal|critical|exception|severe/.test(lo)) return ['ERR','err'];
+  if (/warn|warning/.test(lo)) return ['WRN','wrn'];
+  if (/ info |^info|\[info\]/.test(lo)) return ['INF','inf'];
+  if (/ debug |^debug|\[debug\]/.test(lo)) return ['DBG','dbg'];
+  return ['',''];
+}
+lBtn.onclick = () => {
+  if(es) es.close();
+  es = new EventSource("{{ stream_url }}");
+  es.onmessage = ev => {
+    const [cls, ...rest] = ev.data.split('|||');
+    const raw = rest.join('|||');
+    const line = document.createElement('div');
+    line.className = 'log-line live ' + cls;
+    const ts = document.createElement('span'); ts.className = 'log-ts';
+    const msg = document.createElement('span'); msg.className = 'log-msg';
+    const parts = raw.split(' ');
+    let msgText = raw;
+    if (parts[0].match(/^\d{4}-\d{2}-\d{2}T/)) {
+      ts.textContent = fmtTs(parts[0]);
+      msgText = parts.slice(1).join(' ');
+    } else {
+      ts.textContent = '—';
+    }
+    const [lvlTxt, lvlCls] = lvlBadge(msgText);
+    msg.textContent = msgText;
+    line.appendChild(ts);
+    if (lvlTxt) {
+      const badge = document.createElement('span');
+      badge.className = 'log-lvl log-lvl-' + lvlCls;
+      badge.textContent = lvlTxt;
+      line.appendChild(badge);
+    }
+    line.appendChild(msg);
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  };
+  es.onerror = () => { es.close(); lBtn.style.display=''; sBtn.style.display='none'; };
+  lBtn.style.display = 'none'; sBtn.style.display = '';
+};
+sBtn.onclick = () => { if(es) es.close(); lBtn.style.display=''; sBtn.style.display='none'; };
+cBtn.onclick = () => { box.innerHTML = ''; };
+
+const cy = document.getElementById('copyYaml');
+if (cy) cy.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const txt = document.getElementById('manifestYaml').innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const o = cy.innerHTML; cy.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => cy.innerHTML = o, 1200);
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,1010 @@
+{% extends "base.html" %}
+{% block content %}
+
+{# ── helpers ─────────────────────────────────────────────────────────────── #}
+{% macro fmt_mem(b) %}{% if not b or b == 0 %}—{% elif b < 1048576 %}{{ (b/1024)|round(1) }} Ki{% elif b < 1073741824 %}{{ (b/1048576)|round(0)|int }} Mi{% else %}{{ (b/1073741824)|round(2) }} Gi{% endif %}{% endmacro %}
+{% macro fmt_cpu(m) %}{% if not m or m == 0 %}—{% elif m < 1000 %}{{ m }}m{% else %}{{ (m/1000)|round(2) }}{% endif %}{% endmacro %}
+{% macro phase_cls(p) %}{% if p=='Running' %}ok{% elif p in ('Failed','Error') %}err{% elif p=='Pending' %}warn{% else %}{% endif %}{% endmacro %}
+
+{% set rate_list  = metrics.get('request_rate', []) %}
+{% set error_pct  = metrics.get('error_rate_pct', 0) %}
+{% set p95_s      = metrics.get('p95_latency_s', 0) %}
+{% set p95_ms     = (p95_s * 1000) | round(1) %}
+{% set apdex      = metrics.get('apdex', 0) %}
+{% set total_rps  = rate_list | sum(attribute='rate') | round(3) %}
+{% set trace_list = traces.get('traces', []) %}
+{% set trace_be   = traces.get('backend', '') %}
+
+{% set ts_rps   = timeseries.get('rps', []) %}
+{% set ts_err   = timeseries.get('error_rate', []) %}
+{% set ts_p95   = timeseries.get('p95_ms', []) %}
+{% set ts_apdex = timeseries.get('apdex', []) %}
+
+<!-- ── Page header ───────────────────────────────────────────────────────── -->
+<div class="page-header">
+  <div>
+    <div class="page-title">APM</div>
+    <div class="page-subtitle">Application Performance Monitoring — golden signals · transactions · errors</div>
+  </div>
+  <div class="page-controls">
+    <div class="time-range-wrap">
+      <div class="ctrl-select time-range-btn" id="timeRangeBtn" onclick="toggleTRM(event)">
+        <div class="cl">Time range</div>
+        <i class="ti ti-clock" style="color:var(--orange)"></i>
+        <strong id="trLabel">Last {{ hours }} hour{{ 's' if hours > 1 }}</strong>
+        <i class="ti ti-chevron-down" id="trChevron" style="font-size:11px;color:var(--faint)"></i>
+      </div>
+      <div class="time-range-menu" id="timeRangeMenu">
+        <div class="trm-section">Presets</div>
+        {% for h,lbl in [(1,'Last 1 hour'),(3,'Last 3 hours'),(6,'Last 6 hours'),(24,'Last 24 hours')] %}
+        <div class="trm-item {{ 'trm-active' if h==hours }}" onclick="pickPreset({{ h }},'{{ lbl }}')">{{ lbl }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="refresh-btn" id="refreshBtn" onclick="location.reload()" title="Refresh"><i class="ti ti-refresh"></i></div>
+  </div>
+</div>
+
+<!-- ── 4 Stat cards ───────────────────────────────────────────────────────── -->
+<div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+
+  <!-- RPS -->
+  <div class="stat-card">
+    <div class="stat-icon teal"><i class="ti ti-activity"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">Request Rate</div>
+      <div class="stat-value">{{ total_rps }}</div>
+      <div class="stat-sub"><span style="color:var(--faint)">req / sec</span></div>
+    </div>
+    <canvas class="stat-chart" id="spark-rps" width="54" height="26"></canvas>
+  </div>
+
+  <!-- Error rate -->
+  <div class="stat-card">
+    <div class="stat-icon {{ 'red' if error_pct > 5 else 'orange' if error_pct > 1 else 'teal' }}">
+      <i class="ti ti-alert-circle"></i>
+    </div>
+    <div class="stat-body">
+      <div class="stat-label">Error Rate</div>
+      <div class="stat-value">{{ error_pct }}<span style="font-size:16px">%</span></div>
+      <div class="stat-sub">
+        {% if error_pct == 0 %}<i class="ti ti-circle-check ok"></i><span class="ok">All clear</span>
+        {% elif error_pct < 5 %}<i class="ti ti-alert-triangle warn"></i><span class="warn">Elevated</span>
+        {% else %}<i class="ti ti-alert-triangle" style="color:var(--red)"></i><span style="color:var(--red)">High</span>{% endif %}
+      </div>
+    </div>
+    <canvas class="stat-chart" id="spark-err" width="54" height="26"></canvas>
+  </div>
+
+  <!-- P95 Latency -->
+  <div class="stat-card">
+    <div class="stat-icon blue"><i class="ti ti-clock"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">P95 Latency</div>
+      <div class="stat-value">{{ p95_ms }}<span style="font-size:16px">ms</span></div>
+      <div class="stat-sub">
+        {% if p95_ms == 0 %}<span style="color:var(--faint)">No data</span>
+        {% elif p95_ms < 200 %}<i class="ti ti-circle-check ok"></i><span class="ok">Fast</span>
+        {% elif p95_ms < 1000 %}<i class="ti ti-alert-triangle warn"></i><span class="warn">Moderate</span>
+        {% else %}<i class="ti ti-alert-triangle" style="color:var(--red)"></i><span style="color:var(--red)">Slow</span>{% endif %}
+      </div>
+    </div>
+    <canvas class="stat-chart" id="spark-lat" width="54" height="26"></canvas>
+  </div>
+
+  <!-- Apdex -->
+  <div class="stat-card">
+    <div class="stat-icon {{ 'teal' if apdex >= 0.9 else 'orange' if apdex >= 0.7 else 'red' if apdex > 0 else '' }}">
+      <i class="ti ti-gauge"></i>
+    </div>
+    <div class="stat-body">
+      <div class="stat-label">Apdex Score</div>
+      <div class="stat-value">{{ apdex if apdex else '—' }}</div>
+      <div class="stat-sub">
+        {% if apdex == 0 %}<span style="color:var(--faint)">No histogram data</span>
+        {% elif apdex >= 0.94 %}<i class="ti ti-circle-check ok"></i><span class="ok">Excellent</span>
+        {% elif apdex >= 0.85 %}<i class="ti ti-circle-check ok"></i><span class="ok">Good</span>
+        {% elif apdex >= 0.7 %}<i class="ti ti-alert-triangle warn"></i><span class="warn">Fair</span>
+        {% elif apdex >= 0.5 %}<i class="ti ti-alert-triangle" style="color:var(--orange)"></i><span style="color:var(--orange)">Poor</span>
+        {% else %}<i class="ti ti-alert-triangle" style="color:var(--red)"></i><span style="color:var(--red)">Unacceptable</span>{% endif %}
+      </div>
+    </div>
+    <canvas class="stat-chart" id="spark-apdex" width="54" height="26"></canvas>
+  </div>
+
+</div>
+
+<!-- ── No-cluster banner ──────────────────────────────────────────────────── -->
+{% if not cluster_ok %}
+<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:rgba(245,158,11,.08);
+            border:1px solid rgba(245,158,11,.25);border-radius:8px;margin-bottom:16px">
+  <i class="ti ti-plug-off" style="font-size:20px;color:var(--orange);flex-shrink:0"></i>
+  <div>
+    <div style="font-weight:600;font-size:13px;color:var(--orange)">No cluster connected</div>
+    <div style="font-size:12px;color:var(--faint);margin-top:2px">
+      Namespace, deployment and pod data requires a connected Kubernetes cluster.
+      <a href="/setup" style="color:var(--teal);text-decoration:none;font-weight:500">Connect a cluster →</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Tabs ──────────────────────────────────────────────────────────────── -->
+<div class="panel" style="padding:0">
+  <div style="display:flex;border-bottom:1px solid var(--border);overflow-x:auto">
+    {% set tabs = [
+      ('overview',      'ti-layout-dashboard', 'Overview'),
+      ('transactions',  'ti-arrows-sort',      'Transactions'),
+      ('errors',        'ti-bug',              'Errors'),
+      ('namespaces',    'ti-box-multiple',      'Namespaces'),
+      ('deployments',   'ti-stack-2',           'Deployments'),
+      ('pods',          'ti-circles-relation',  'Pods'),
+      ('traces',        'ti-git-branch',        'Traces'),
+    ] %}
+    {% for tid, icon, label in tabs %}
+    <button class="apm-tab {{ 'apm-tab-active' if tab == tid }}"
+            onclick="switchTab('{{ tid }}')"
+            style="padding:12px 20px;background:none;border:none;border-bottom:2px solid {{ 'var(--teal)' if tab==tid else 'transparent' }};
+                   color:{{ 'var(--teal)' if tab==tid else 'var(--faint)' }};cursor:pointer;white-space:nowrap;
+                   display:flex;align-items:center;gap:6px;font-size:13px;font-weight:{{ '600' if tab==tid else '400' }}">
+      <i class="ti {{ icon }}"></i>{{ label }}
+      {% if tid == 'transactions' and transactions %}<span class="badge teal" style="font-size:10px">{{ transactions|length }}</span>
+      {% elif tid == 'errors' and errors %}<span class="badge red" style="font-size:10px">{{ errors|length }}</span>
+      {% elif tid == 'namespaces' %}<span class="badge gray" style="font-size:10px">{{ ns_list|length }}</span>
+      {% elif tid == 'deployments' %}<span class="badge gray" style="font-size:10px">{{ dep_list|length }}</span>
+      {% elif tid == 'pods' %}<span class="badge gray" style="font-size:10px">{{ pod_list|length }}</span>
+      {% elif tid == 'traces' and trace_list %}<span class="badge blue" style="font-size:10px">{{ trace_list|length }}</span>
+      {% endif %}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Overview
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-overview" class="apm-tab-panel" style="{{ 'display:none' if tab != 'overview' }}">
+
+    <!-- Time-series charts row -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid var(--border)">
+
+      <!-- Throughput + Error Rate chart -->
+      <div style="padding:16px;border-right:1px solid var(--border)">
+        <div class="panel-head" style="padding:0 0 10px">
+          <div class="panel-title"><i class="ti ti-chart-line" style="color:var(--teal)"></i> Throughput &amp; Error Rate</div>
+          <span style="font-size:11px;color:var(--faint)">Last {{ hours }} hour{{ 's' if hours > 1 }}</span>
+        </div>
+        <div style="height:180px;position:relative">
+          {% if ts_rps or ts_err %}
+          <canvas id="chart-throughput"></canvas>
+          {% else %}
+          <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--faint);flex-direction:column;gap:6px">
+            <i class="ti ti-chart-line-off" style="font-size:24px;opacity:.4"></i>
+            <span style="font-size:12px">No time-series data</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- P95 Latency + Apdex chart -->
+      <div style="padding:16px">
+        <div class="panel-head" style="padding:0 0 10px">
+          <div class="panel-title"><i class="ti ti-clock" style="color:var(--blue)"></i> P95 Latency &amp; Apdex</div>
+          <span style="font-size:11px;color:var(--faint)">Last {{ hours }} hour{{ 's' if hours > 1 }}</span>
+        </div>
+        <div style="height:180px;position:relative">
+          {% if ts_p95 or ts_apdex %}
+          <canvas id="chart-latency"></canvas>
+          {% else %}
+          <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--faint);flex-direction:column;gap:6px">
+            <i class="ti ti-chart-line-off" style="font-size:24px;opacity:.4"></i>
+            <span style="font-size:12px">No time-series data — requires histogram metrics</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Endpoint breakdown -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+      <div style="padding:16px;border-right:1px solid var(--border)">
+        <div class="panel-head" style="padding:0 0 12px"><div class="panel-title"><i class="ti ti-list" style="color:var(--teal)"></i> Endpoint Breakdown</div></div>
+        {% if rate_list %}
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Handler</th><th>Method</th><th>Status</th><th style="text-align:right">r/s</th></tr></thead>
+            <tbody>
+            {% for ep in rate_list | sort(attribute='rate', reverse=True) %}
+            {% set s = ep.status | string %}
+            {% set sc = 'ok' if s.startswith('2') else 'warn' if s.startswith('3') or s.startswith('4') else 'err' if s.startswith('5') else '' %}
+            <tr>
+              <td style="font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ ep.handler }}">{{ ep.handler or '—' }}</td>
+              <td><span class="badge {{ 'blue' if ep.method=='GET' else 'teal' if ep.method=='POST' else 'orange' if ep.method in ('PUT','PATCH') else 'red' if ep.method=='DELETE' else 'gray' }}">{{ ep.method }}</span></td>
+              <td><span class="dot {{ sc }}"></span>{{ ep.status }}</td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums">{{ "%.4f"|format(ep.rate) }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div style="padding:24px;text-align:center;color:var(--faint);font-size:12px">
+          <i class="ti ti-database-off" style="display:block;font-size:24px;margin-bottom:6px"></i>
+          No request metrics — ensure Prometheus scrapes <code>/metrics</code>
+        </div>
+        {% endif %}
+      </div>
+
+      <div style="padding:16px">
+        <div class="panel-head" style="padding:0 0 12px"><div class="panel-title"><i class="ti ti-chart-bar" style="color:var(--blue)"></i> Rate by Endpoint</div></div>
+        <div style="height:220px;position:relative">
+          {% if rate_list %}<canvas id="chart-endpoints"></canvas>
+          {% else %}<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--faint)"><i class="ti ti-chart-bar-off" style="font-size:24px"></i></div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Transactions
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-transactions" class="apm-tab-panel" style="{{ 'display:none' if tab != 'transactions' }}">
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <i class="ti ti-search" style="color:var(--faint);font-size:13px"></i>
+      <input id="txFilter" type="text" placeholder="Filter by endpoint…"
+             style="background:none;border:none;outline:none;font-size:12px;color:var(--text);flex:1;min-width:120px"
+             oninput="filterTxRows(this.value)">
+      <select id="txSort" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--text)"
+              onchange="sortTxRows(this.value)">
+        <option value="avg_ms">Sort: Avg Latency</option>
+        <option value="p95_ms">Sort: P95 Latency</option>
+        <option value="rpm">Sort: Throughput</option>
+        <option value="error_rate">Sort: Error Rate</option>
+      </select>
+      {% if transactions %}
+      <span style="font-size:11px;color:var(--faint)">{{ transactions|length }} endpoint{{ 's' if transactions|length != 1 }}</span>
+      {% endif %}
+    </div>
+
+    {% if transactions %}
+    <div style="overflow-x:auto">
+      <table id="txTable">
+        <thead>
+          <tr>
+            <th>Endpoint</th>
+            <th>Method</th>
+            <th style="text-align:right">Throughput</th>
+            <th style="text-align:right">Avg Latency</th>
+            <th style="text-align:right">P95 Latency</th>
+            <th style="text-align:right">Error Rate</th>
+          </tr>
+        </thead>
+        <tbody id="txBody">
+        {% for tx in transactions %}
+        <tr class="tx-row"
+            data-handler="{{ tx.handler }}"
+            data-avg="{{ tx.avg_ms }}"
+            data-p95="{{ tx.p95_ms }}"
+            data-rpm="{{ tx.rpm }}"
+            data-err="{{ tx.error_rate }}">
+          <td style="font-family:monospace;font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ tx.handler }}">{{ tx.handler }}</td>
+          <td><span class="badge {{ 'blue' if tx.method=='GET' else 'teal' if tx.method=='POST' else 'orange' if tx.method in ('PUT','PATCH') else 'red' if tx.method=='DELETE' else 'gray' }}">{{ tx.method }}</span></td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;font-size:12px">{{ tx.rpm }} rpm</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            <span class="{{ 'ok' if tx.avg_ms < 200 else 'warn' if tx.avg_ms < 1000 else 'err' }}" style="font-size:12px">
+              {{ tx.avg_ms }} ms
+            </span>
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            {% if tx.p95_ms %}
+            <span class="{{ 'ok' if tx.p95_ms < 500 else 'warn' if tx.p95_ms < 2000 else 'err' }}" style="font-size:12px">
+              {{ tx.p95_ms }} ms
+            </span>
+            {% else %}<span style="color:var(--faint);font-size:12px">—</span>{% endif %}
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            {% if tx.error_rate > 0 %}
+            <span class="{{ 'err' if tx.error_rate > 5 else 'warn' }}" style="font-size:12px">{{ tx.error_rate }}%</span>
+            {% else %}<span class="ok" style="font-size:12px">0%</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Latency distribution mini-chart -->
+    <div style="padding:16px;border-top:1px solid var(--border)">
+      <div class="panel-head" style="padding:0 0 10px">
+        <div class="panel-title"><i class="ti ti-chart-bar" style="color:var(--teal)"></i> Avg Latency by Endpoint (top 10)</div>
+      </div>
+      <div style="height:200px;position:relative"><canvas id="chart-tx-latency"></canvas></div>
+    </div>
+
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)">
+      <i class="ti ti-arrows-sort" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>
+      <strong style="color:var(--text);display:block;margin-bottom:4px">No transaction data</strong>
+      <span style="font-size:12px">Requires <code>http_request_duration_seconds</code> histogram from Prometheus.</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Errors
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-errors" class="apm-tab-panel" style="{{ 'display:none' if tab != 'errors' }}">
+
+    <!-- Error rate over time chart -->
+    {% if ts_err %}
+    <div style="padding:16px;border-bottom:1px solid var(--border)">
+      <div class="panel-head" style="padding:0 0 10px">
+        <div class="panel-title"><i class="ti ti-chart-line" style="color:var(--red)"></i> Error Rate Over Time</div>
+        <span style="font-size:11px;color:var(--faint)">Last {{ hours }} hour{{ 's' if hours > 1 }}</span>
+      </div>
+      <div style="height:160px;position:relative"><canvas id="chart-error-ts"></canvas></div>
+    </div>
+    {% endif %}
+
+    <!-- Error breakdown toolbar -->
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <i class="ti ti-search" style="color:var(--faint);font-size:13px"></i>
+      <input id="errFilter" type="text" placeholder="Filter by endpoint…"
+             style="background:none;border:none;outline:none;font-size:12px;color:var(--text);flex:1;min-width:120px"
+             oninput="filterErrRows(this.value)">
+      <div style="display:flex;gap:6px">
+        <button class="ctrl-select" style="padding:3px 10px;font-size:11px;cursor:pointer" onclick="filterErrStatus('')" id="errAll">All</button>
+        <button class="ctrl-select" style="padding:3px 10px;font-size:11px;cursor:pointer;color:var(--orange)" onclick="filterErrStatus('4')" id="err4xx">4xx</button>
+        <button class="ctrl-select" style="padding:3px 10px;font-size:11px;cursor:pointer;color:var(--red)" onclick="filterErrStatus('5')" id="err5xx">5xx</button>
+      </div>
+    </div>
+
+    {% if errors %}
+    <div style="overflow-x:auto">
+      <table id="errTable">
+        <thead>
+          <tr>
+            <th>Endpoint</th>
+            <th>Method</th>
+            <th>Status</th>
+            <th style="text-align:right">Rate (r/s)</th>
+            <th style="text-align:right">Error %</th>
+            <th>Severity</th>
+          </tr>
+        </thead>
+        <tbody id="errBody">
+        {% for e in errors %}
+        {% set is5xx = e.status.startswith('5') %}
+        <tr class="err-row" data-handler="{{ e.handler }}" data-status="{{ e.status }}">
+          <td style="font-family:monospace;font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.handler }}">{{ e.handler }}</td>
+          <td><span class="badge {{ 'blue' if e.method=='GET' else 'teal' if e.method=='POST' else 'orange' if e.method in ('PUT','PATCH') else 'red' if e.method=='DELETE' else 'gray' }}">{{ e.method }}</span></td>
+          <td>
+            <span class="badge {{ 'red' if is5xx else 'orange' }}" style="font-family:monospace">{{ e.status }}</span>
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;font-size:12px">{{ "%.4f"|format(e.rate) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums">
+            <span class="{{ 'err' if e.error_pct > 10 else 'warn' }}" style="font-size:12px">{{ e.error_pct }}%</span>
+          </td>
+          <td>
+            {% if is5xx %}
+            <div class="status-pill err"><div class="sp-dot"></div>Server Error</div>
+            {% else %}
+            <div class="status-pill deg"><div class="sp-dot"></div>Client Error</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Top erroring endpoints bar chart -->
+    <div style="padding:16px;border-top:1px solid var(--border)">
+      <div class="panel-head" style="padding:0 0 10px">
+        <div class="panel-title"><i class="ti ti-chart-bar" style="color:var(--red)"></i> Error Rate by Endpoint (top 10)</div>
+      </div>
+      <div style="height:200px;position:relative"><canvas id="chart-err-bar"></canvas></div>
+    </div>
+
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)">
+      <i class="ti ti-circle-check" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4;color:var(--teal)"></i>
+      <strong style="color:var(--text);display:block;margin-bottom:4px">No errors detected</strong>
+      <span style="font-size:12px">No 4xx/5xx responses in the selected time range.</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Namespaces
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-namespaces" class="apm-tab-panel" style="{{ 'display:none' if tab != 'namespaces' }}">
+    {% if ns_list %}
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Namespace</th>
+            <th style="text-align:center">Pods</th>
+            <th style="text-align:center">Running</th>
+            <th style="text-align:center">Pending</th>
+            <th style="text-align:center">Failed</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th>Health</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for ns in ns_list %}
+        {% set health_ok = ns.running == ns.total and ns.failed == 0 and ns.total > 0 %}
+        <tr>
+          <td><a class="row-link" href="/pods?namespace={{ ns.name }}">{{ ns.name }}</a></td>
+          <td style="text-align:center;font-variant-numeric:tabular-nums">{{ ns.total }}</td>
+          <td style="text-align:center"><span class="{{ 'ok' if ns.running else '' }}">{{ ns.running }}</span></td>
+          <td style="text-align:center">{% if ns.pending %}<span class="warn">{{ ns.pending }}</span>{% else %}<span style="color:var(--faint)">0</span>{% endif %}</td>
+          <td style="text-align:center">{% if ns.failed %}<span class="err">{{ ns.failed }}</span>{% else %}<span style="color:var(--faint)">0</span>{% endif %}</td>
+          <td>
+            {% if ns.cpu_pct %}
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="width:64px;height:5px;background:var(--surface2);border-radius:3px">
+                <div style="width:{{ [ns.cpu_pct,100]|min }}%;height:100%;background:{{ 'var(--red)' if ns.cpu_pct>80 else 'var(--orange)' if ns.cpu_pct>50 else 'var(--teal)' }};border-radius:3px"></div>
+              </div>
+              <span style="font-size:11px;font-variant-numeric:tabular-nums">{{ ns.cpu_pct|round(1) }}%</span>
+            </div>
+            {% else %}<span style="color:var(--faint)">—</span>{% endif %}
+          </td>
+          <td style="font-size:12px;font-variant-numeric:tabular-nums">{{ fmt_mem(ns.mem_b) }}</td>
+          <td>
+            {% if ns.total == 0 %}<div class="status-pill" style="color:var(--faint)"><div class="sp-dot" style="background:var(--faint)"></div>Empty</div>
+            {% elif health_ok %}<div class="status-pill run"><div class="sp-dot"></div>Healthy</div>
+            {% elif ns.failed %}<div class="status-pill err"><div class="sp-dot"></div>Degraded</div>
+            {% else %}<div class="status-pill deg"><div class="sp-dot"></div>Warning</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)"><i class="ti ti-box-multiple" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No namespace data available.</div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Deployments
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-deployments" class="apm-tab-panel" style="{{ 'display:none' if tab != 'deployments' }}">
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <i class="ti ti-search" style="color:var(--faint);font-size:13px"></i>
+      <input id="depFilter" type="text" placeholder="Filter deployments…"
+             style="background:none;border:none;outline:none;font-size:12px;color:var(--text);flex:1"
+             oninput="filterRows('dep-row','depFilter','dep-ns')">
+      <select id="depNsFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--text)"
+              onchange="filterRows('dep-row','depFilter','dep-ns')">
+        <option value="">All namespaces</option>
+        {% for ns in namespaces %}<option value="{{ ns }}">{{ ns }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if dep_list %}
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Deployment</th>
+            <th>Namespace</th>
+            <th style="text-align:center">Desired</th>
+            <th style="text-align:center">Ready</th>
+            <th style="text-align:center">Pods</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for dep in dep_list %}
+        {% set is_ok = dep.ready >= dep.desired and dep.desired > 0 %}
+        <tr class="dep-row" data-dep-ns="{{ dep.namespace }}">
+          <td><a class="row-link" href="/deployments/{{ dep.namespace }}/{{ dep.name }}">{{ dep.name }}</a></td>
+          <td><span class="badge gray">{{ dep.namespace }}</span></td>
+          <td style="text-align:center">{{ dep.desired }}</td>
+          <td style="text-align:center">
+            <span class="{{ 'ok' if dep.ready == dep.desired else 'warn' if dep.ready > 0 else 'err' }}">{{ dep.ready }}</span>
+          </td>
+          <td style="text-align:center;color:var(--faint)">{{ dep.pod_count or dep.desired }}</td>
+          <td style="font-size:12px;font-variant-numeric:tabular-nums">{{ fmt_cpu(dep.cpu_m) }}</td>
+          <td style="font-size:12px;font-variant-numeric:tabular-nums">{{ fmt_mem(dep.mem_b) }}</td>
+          <td>
+            {% if dep.desired == 0 %}<div class="status-pill deg"><div class="sp-dot"></div>Scaled to 0</div>
+            {% elif is_ok %}<div class="status-pill run"><div class="sp-dot"></div>Running</div>
+            {% elif dep.ready > 0 %}<div class="status-pill deg"><div class="sp-dot"></div>Degraded</div>
+            {% else %}<div class="status-pill err"><div class="sp-dot"></div>Not Ready</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)"><i class="ti ti-stack-2" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No deployment data available.</div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Pods
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-pods" class="apm-tab-panel" style="{{ 'display:none' if tab != 'pods' }}">
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <i class="ti ti-search" style="color:var(--faint);font-size:13px"></i>
+      <input id="podFilter" type="text" placeholder="Filter pods…"
+             style="background:none;border:none;outline:none;font-size:12px;color:var(--text);flex:1"
+             oninput="filterRows('pod-row','podFilter','pod-ns')">
+      <select id="podNsFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--text)"
+              onchange="filterRows('pod-row','podFilter','pod-ns')">
+        <option value="">All namespaces</option>
+        {% for ns in namespaces %}<option value="{{ ns }}">{{ ns }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if pod_list %}
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Pod</th>
+            <th>Namespace</th>
+            <th>Node</th>
+            <th>Status</th>
+            <th>CPU</th>
+            <th>Memory</th>
+            <th style="text-align:center">Restarts</th>
+            <th>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for pod in pod_list %}
+        <tr class="pod-row" data-pod-ns="{{ pod.namespace }}">
+          <td><a class="row-link" href="/pods/{{ pod.namespace }}/{{ pod.name }}">{{ pod.name }}</a></td>
+          <td><span class="badge gray">{{ pod.namespace }}</span></td>
+          <td style="font-size:11px;color:var(--faint)">{{ pod.node or '—' }}</td>
+          <td>
+            <div class="status-pill {{ 'run' if pod.phase=='Running' else 'err' if pod.phase in ('Failed','Error') else 'deg' if pod.phase=='Pending' else '' }}">
+              <div class="sp-dot"></div>{{ pod.phase }}
+            </div>
+          </td>
+          <td style="font-size:12px;font-variant-numeric:tabular-nums">{{ fmt_cpu(pod.cpu_m) }}</td>
+          <td style="font-size:12px;font-variant-numeric:tabular-nums">{{ fmt_mem(pod.mem_b) }}</td>
+          <td style="text-align:center">
+            {% if pod.restarts > 0 %}<span class="{{ 'err' if pod.restarts > 5 else 'warn' }}">{{ pod.restarts }}</span>
+            {% else %}<span style="color:var(--faint)">0</span>{% endif %}
+          </td>
+          <td style="font-size:11px;color:var(--faint)">{{ pod.created }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)"><i class="ti ti-circles-relation" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>No pod data available.</div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       TAB: Traces
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div id="tab-traces" class="apm-tab-panel" style="{{ 'display:none' if tab != 'traces' }}">
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <i class="ti ti-search" style="color:var(--faint);font-size:13px"></i>
+      <input id="traceFilter" type="text" placeholder="Filter by service…"
+             style="background:none;border:none;outline:none;font-size:12px;color:var(--text);flex:1"
+             oninput="filterTraces(this.value)">
+      {% if trace_be %}<span class="badge gray" style="flex-shrink:0">{{ trace_be }}</span>{% endif %}
+    </div>
+
+    {% if trace_list %}
+    <div style="overflow-x:auto">
+      <table id="tracesTable">
+        <thead><tr><th>Trace ID</th><th>Service</th><th>Root Operation</th><th>Duration</th><th>Spans</th></tr></thead>
+        <tbody>
+        {% for t in trace_list %}
+
+          {% if trace_be == 'tempo' %}
+            {% set tid    = t.get('traceID','') %}
+            {% set svc    = t.get('rootServiceName','—') %}
+            {% set op     = t.get('rootTraceName','—') %}
+            {% set dur_ms = t.get('durationMs',0) %}
+            {% set spans_n = '—' %}
+          <tr class="trace-row" data-svc="{{ svc }}">
+            <td><a class="row-link" href="/apm/trace/{{ tid }}" style="font-family:monospace;font-size:11px">{{ tid[:16] }}…</a></td>
+            <td>{{ svc }}</td>
+            <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ op }}">{{ op }}</td>
+            <td><span class="{{ 'ok' if dur_ms<500 else 'warn' if dur_ms<2000 else 'err' }}">{{ dur_ms }} ms</span></td>
+            <td>{{ spans_n }}</td>
+          </tr>
+
+          {% else %}
+            {% set tid    = t.get('traceID','') %}
+            {% set spans  = t.get('spans',[]) %}
+            {% set procs  = t.get('processes',{}) %}
+            {% set root   = spans[0] if spans else {} %}
+            {% set pid    = root.get('processID','') %}
+            {% set svc    = procs.get(pid,{}).get('serviceName','—') if pid else '—' %}
+            {% set op     = root.get('operationName','—') %}
+            {% set dur_us = root.get('duration',0) %}
+            {% set dur_ms = (dur_us/1000)|round(1) %}
+          <tr class="trace-row" data-svc="{{ svc }}">
+            <td><a class="row-link" href="/apm/trace/{{ tid }}" style="font-family:monospace;font-size:11px">{{ tid[:16] }}…</a></td>
+            <td>{{ svc }}</td>
+            <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ op }}">{{ op }}</td>
+            <td><span class="{{ 'ok' if dur_ms<500 else 'warn' if dur_ms<2000 else 'err' }}">{{ dur_ms }} ms</span></td>
+            <td>{{ spans|length }}</td>
+          </tr>
+          {% endif %}
+
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% elif trace_be %}
+    <div style="padding:40px;text-align:center;color:var(--faint)">
+      <i class="ti ti-git-branch" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>
+      No traces found. Try extending the time range or generating traffic.
+    </div>
+    {% else %}
+    <div style="padding:40px;text-align:center;color:var(--faint)">
+      <i class="ti ti-plug-off" style="font-size:28px;display:block;margin-bottom:10px;opacity:.4"></i>
+      <strong style="color:var(--text)">No trace backend configured.</strong><br>
+      <span style="font-size:12px">Set <code>TEMPO_URL</code> or <code>JAEGER_URL</code> on the backend-service.</span>
+    </div>
+    {% endif %}
+  </div>
+
+</div>{# /.panel #}
+
+<script>
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(id) {
+  document.querySelectorAll('.apm-tab-panel').forEach(el => el.style.display = 'none');
+  document.getElementById('tab-' + id).style.display = '';
+  document.querySelectorAll('.apm-tab').forEach(btn => {
+    const active = btn.onclick?.toString().includes("'" + id + "'");
+    btn.style.borderBottomColor = active ? 'var(--teal)' : 'transparent';
+    btn.style.color = active ? 'var(--teal)' : 'var(--faint)';
+    btn.style.fontWeight = active ? '600' : '400';
+  });
+  const url = new URL(location.href);
+  url.searchParams.set('tab', id);
+  history.replaceState({}, '', url.toString());
+}
+
+// ── Generic row filter (text + namespace dropdown) ─────────────────────────
+function filterRows(rowClass, inputId, nsDataAttr) {
+  const q  = (document.getElementById(inputId)?.value || '').toLowerCase();
+  const ns = document.getElementById(nsDataAttr === 'dep-ns' ? 'depNsFilter' : 'podNsFilter')?.value || '';
+  document.querySelectorAll('.' + rowClass).forEach(row => {
+    const text  = row.textContent.toLowerCase();
+    const rowNs = row.dataset[nsDataAttr === 'dep-ns' ? 'depNs' : 'podNs'] || '';
+    row.style.display = ((!q || text.includes(q)) && (!ns || rowNs === ns)) ? '' : 'none';
+  });
+}
+
+// ── Transactions filter + sort ─────────────────────────────────────────────
+function filterTxRows(q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll('#txBody .tx-row').forEach(r => {
+    r.style.display = !lq || r.dataset.handler.toLowerCase().includes(lq) ? '' : 'none';
+  });
+}
+function sortTxRows(key) {
+  const tbody = document.getElementById('txBody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('.tx-row'));
+  rows.sort((a, b) => parseFloat(b.dataset[key]) - parseFloat(a.dataset[key]));
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+// ── Errors filter ──────────────────────────────────────────────────────────
+let _errStatusFilter = '';
+function filterErrRows(q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll('#errBody .err-row').forEach(r => {
+    const textMatch   = !lq || r.dataset.handler.toLowerCase().includes(lq);
+    const statusMatch = !_errStatusFilter || r.dataset.status.startsWith(_errStatusFilter);
+    r.style.display = textMatch && statusMatch ? '' : 'none';
+  });
+}
+function filterErrStatus(prefix) {
+  _errStatusFilter = prefix;
+  filterErrRows(document.getElementById('errFilter')?.value || '');
+  ['errAll','err4xx','err5xx'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.opacity = '1';
+  });
+}
+
+// ── Trace filter ───────────────────────────────────────────────────────────
+function filterTraces(q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll('#tracesTable .trace-row').forEach(r => {
+    r.style.display = !lq || r.dataset.svc.toLowerCase().includes(lq) ? '' : 'none';
+  });
+}
+
+// ── Chart helpers ──────────────────────────────────────────────────────────
+const _gridColor  = 'rgba(255,255,255,.05)';
+const _tickColor  = '#94a3b8';
+const _tickFont   = { size: 9 };
+const _noLegend   = { legend: { display: false } };
+
+function tsToLabel(ms) {
+  const d = new Date(ms);
+  return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+}
+
+function lineChart(id, datasets, yLeft, yRight) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const labels = (datasets[0]?.rawTs || []).map(tsToLabel);
+  new Chart(el, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: datasets.map(ds => ({
+        label: ds.label,
+        data: ds.data,
+        borderColor: ds.color,
+        backgroundColor: ds.fill || 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: !!ds.fill,
+        tension: 0.3,
+        yAxisID: ds.yAxis || 'y',
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: datasets.length > 1, labels: { color: _tickColor, font: _tickFont, boxWidth: 10 } },
+        tooltip: { callbacks: {
+          label: c => ` ${c.dataset.label}: ${c.formattedValue}${c.dataset.unit || ''}`
+        }}
+      },
+      scales: {
+        x: { grid: { color: _gridColor }, ticks: { color: _tickColor, font: _tickFont, maxTicksLimit: 8 } },
+        y: {
+          position: 'left',
+          grid: { color: _gridColor },
+          ticks: { color: _tickColor, font: _tickFont },
+          ...(yLeft || {})
+        },
+        ...(yRight ? { y2: { position: 'right', grid: { display: false }, ticks: { color: _tickColor, font: _tickFont }, ...yRight } } : {})
+      }
+    }
+  });
+}
+
+// ── Throughput + Error Rate chart ──────────────────────────────────────────
+{% set ts_rps_json   = ts_rps   | tojson %}
+{% set ts_err_json   = ts_err   | tojson %}
+{% set ts_p95_json   = ts_p95   | tojson %}
+{% set ts_apdex_json = ts_apdex | tojson %}
+
+(function() {
+  const rpsData  = {{ ts_rps_json }};
+  const errData  = {{ ts_err_json }};
+  const p95Data  = {{ ts_p95_json }};
+  const apxData  = {{ ts_apdex_json }};
+
+  if (rpsData.length || errData.length) {
+    const base = rpsData.length ? rpsData : errData;
+    lineChart('chart-throughput', [
+      { label: 'RPS',        data: rpsData.map(d=>d[1]), rawTs: rpsData.map(d=>d[0]), color: '#06b6d4', yAxis: 'y',  unit: ' r/s',
+        fill: 'rgba(6,182,212,.08)' },
+      { label: 'Error Rate', data: errData.map(d=>d[1]), rawTs: errData.map(d=>d[0]), color: '#f43f5e', yAxis: 'y2', unit: '%' },
+    ],
+    { title: { display: false } },
+    { min: 0, max: 100, ticks: { callback: v => v + '%' } }
+    );
+  }
+
+  if (p95Data.length || apxData.length) {
+    lineChart('chart-latency', [
+      { label: 'P95 ms',  data: p95Data.map(d=>d[1]), rawTs: p95Data.map(d=>d[0]), color: '#3b82f6', yAxis: 'y',  unit: ' ms' },
+      { label: 'Apdex',   data: apxData.map(d=>d[1]), rawTs: apxData.map(d=>d[0]), color: '#10b981', yAxis: 'y2', unit: '' },
+    ],
+    {},
+    { min: 0, max: 1, ticks: { callback: v => v.toFixed(1) } }
+    );
+  }
+
+  // Error rate time-series in the Errors tab
+  if (errData.length) {
+    const el = document.getElementById('chart-error-ts');
+    if (el) {
+      new Chart(el, {
+        type: 'line',
+        data: {
+          labels: errData.map(d => tsToLabel(d[0])),
+          datasets: [{ data: errData.map(d=>d[1]), borderColor:'#f43f5e',
+            backgroundColor:'rgba(244,63,94,.08)', fill:true, borderWidth:1.5, pointRadius:0, tension:.3 }]
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          plugins: { legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw}%`}} },
+          scales: {
+            x: { grid:{color:_gridColor}, ticks:{color:_tickColor,font:_tickFont,maxTicksLimit:8} },
+            y: { grid:{color:_gridColor}, ticks:{color:_tickColor,font:_tickFont,callback:v=>v+'%'}, min:0 }
+          }
+        }
+      });
+    }
+  }
+})();
+
+// ── Endpoint bar chart (Overview) ──────────────────────────────────────────
+{% if rate_list %}
+(function(){
+  const data = {{ rate_list | tojson }};
+  const grouped = {};
+  data.forEach(ep => {
+    const k = (ep.handler || 'unknown') + ' [' + ep.method + ']';
+    grouped[k] = (grouped[k] || 0) + ep.rate;
+  });
+  const sorted = Object.entries(grouped).sort((a,b) => b[1]-a[1]).slice(0,10);
+  const ctx = document.getElementById('chart-endpoints');
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(e => e[0]),
+      datasets: [{ data: sorted.map(e => parseFloat(e[1].toFixed(4))),
+        backgroundColor: 'rgba(6,182,212,.35)', borderColor: 'rgba(6,182,212,.9)',
+        borderWidth: 1, borderRadius: 3 }]
+    },
+    options: {
+      indexAxis: 'y', responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw} r/s`}} },
+      scales: {
+        x: { grid:{color:_gridColor}, ticks:{color:_tickColor,font:_tickFont} },
+        y: { grid:{display:false}, ticks:{color:_tickColor,font:_tickFont,
+               callback: v => v.length > 30 ? v.slice(0,30)+'…' : v} },
+      }
+    }
+  });
+})();
+{% endif %}
+
+// ── Transactions latency bar chart ─────────────────────────────────────────
+{% if transactions %}
+(function(){
+  const data = {{ transactions | tojson }};
+  const top10 = data.slice(0, 10);
+  const el = document.getElementById('chart-tx-latency');
+  if (!el) return;
+  new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: top10.map(t => {
+        const h = t.handler;
+        return h.length > 35 ? '…' + h.slice(-34) : h;
+      }),
+      datasets: [
+        { label: 'Avg ms', data: top10.map(t=>t.avg_ms),
+          backgroundColor:'rgba(59,130,246,.45)', borderColor:'rgba(59,130,246,.9)', borderWidth:1, borderRadius:3 },
+        { label: 'P95 ms', data: top10.map(t=>t.p95_ms),
+          backgroundColor:'rgba(249,115,22,.35)', borderColor:'rgba(249,115,22,.9)', borderWidth:1, borderRadius:3 },
+      ]
+    },
+    options: {
+      indexAxis: 'y', responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:true,labels:{color:_tickColor,font:_tickFont,boxWidth:10}},
+                 tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${c.raw} ms`}} },
+      scales: {
+        x: { grid:{color:_gridColor}, ticks:{color:_tickColor,font:_tickFont,callback:v=>v+'ms'} },
+        y: { grid:{display:false}, ticks:{color:_tickColor,font:_tickFont} }
+      }
+    }
+  });
+})();
+{% endif %}
+
+// ── Errors bar chart ───────────────────────────────────────────────────────
+{% if errors %}
+(function(){
+  const data = {{ errors | tojson }};
+  // group by handler — sum error rates
+  const map = {};
+  data.forEach(e => {
+    const k = e.handler + ' [' + e.method + ']';
+    map[k] = (map[k] || 0) + e.error_pct;
+  });
+  const sorted = Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const el = document.getElementById('chart-err-bar');
+  if (!el) return;
+  new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(e => e[0].length > 35 ? '…' + e[0].slice(-34) : e[0]),
+      datasets: [{ label: 'Error %', data: sorted.map(e=>e[1]),
+        backgroundColor:'rgba(244,63,94,.35)', borderColor:'rgba(244,63,94,.9)',
+        borderWidth:1, borderRadius:3 }]
+    },
+    options: {
+      indexAxis: 'y', responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw}%`}} },
+      scales: {
+        x: { grid:{color:_gridColor}, ticks:{color:_tickColor,font:_tickFont,callback:v=>v+'%'}, min:0 },
+        y: { grid:{display:false}, ticks:{color:_tickColor,font:_tickFont} }
+      }
+    }
+  });
+})();
+{% endif %}
+
+// ── Sparklines (real data from time-series, synthetic fallback) ────────────
+function sparkline(id, data, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  new Chart(el,{type:'line',data:{labels:data.map((_,i)=>i),
+    datasets:[{data,borderColor:color,borderWidth:1.5,pointRadius:0,fill:false,tension:.4}]},
+    options:{responsive:false,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:{display:false},y:{display:false}},events:[]}});
+}
+function synth(base, len, noise) {
+  const d=[]; let v=base*.8;
+  for(let i=0;i<len;i++){v=Math.max(0,v+(Math.random()-.45)*noise);d.push(parseFloat(v.toFixed(4)));}
+  d[d.length-1]=base; return d;
+}
+
+window.addEventListener('load', () => {
+  const rpsData  = {{ ts_rps_json }};
+  const errData  = {{ ts_err_json }};
+  const p95Data  = {{ ts_p95_json }};
+  const apxData  = {{ ts_apdex_json }};
+
+  // Use last 15 real points if available, otherwise synthesise
+  function spark(series, base, noise) {
+    if (series.length >= 2) return series.slice(-15).map(d=>d[1]);
+    return synth(base, 10, noise);
+  }
+
+  sparkline('spark-rps',   spark(rpsData, {{ total_rps }}, {{ [total_rps*0.15, 0.01]|max }}), '#06b6d4');
+  sparkline('spark-err',   spark(errData, {{ error_pct }}, {{ [error_pct*0.1,  0.5  ]|max }}),
+    '{{ "#f43f5e" if error_pct>5 else "#f59e0b" if error_pct>1 else "#10b981" }}');
+  sparkline('spark-lat',   spark(p95Data, {{ p95_ms }},   {{ [p95_ms*0.08,    5    ]|max }}), '#3b82f6');
+  sparkline('spark-apdex', spark(apxData, {{ apdex }},    {{ [apdex*0.02,     0.01 ]|max }}),
+    '{{ "#10b981" if apdex >= 0.85 else "#f59e0b" if apdex >= 0.7 else "#f43f5e" if apdex > 0 else "#94a3b8" }}');
+});
+
+// ── Time range menu ────────────────────────────────────────────────────────
+function toggleTRM(e) {
+  e.stopPropagation();
+  const m = document.getElementById('timeRangeMenu');
+  const open = m.classList.toggle('open');
+  document.getElementById('trChevron').style.transform = open ? 'rotate(180deg)' : '';
+}
+document.addEventListener('click', () => {
+  const m = document.getElementById('timeRangeMenu');
+  if (m && m.classList.contains('open')) {
+    m.classList.remove('open');
+    document.getElementById('trChevron').style.transform = '';
+  }
+});
+function pickPreset(hours, label) {
+  document.getElementById('trLabel').textContent = label;
+  document.getElementById('timeRangeMenu').classList.remove('open');
+  const url = new URL(location.href);
+  url.searchParams.set('hours', hours);
+  location.href = url.toString();
+}
+
+// ── Auto-refresh every 60 s ────────────────────────────────────────────────
+let _c = 60;
+const _rb = document.getElementById('refreshBtn');
+setInterval(() => {
+  _c--;
+  if (_rb) _rb.title = `Refresh (auto in ${_c}s)`;
+  if (_c <= 0) location.reload();
+}, 1000);
+</script>
+{% endblock %}

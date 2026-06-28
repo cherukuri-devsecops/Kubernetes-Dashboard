@@ -1,0 +1,22 @@
+{{- if and .Values.sqlite.persistence.enabled (not .Values.sqlite.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-sqlite
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.sqlite.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.sqlite.persistence.size }}
+  {{- if .Values.sqlite.persistence.storageClass }}
+  storageClassName: {{ .Values.sqlite.persistence.storageClass }}
+  {{- else }}
+  # Empty storageClassName binds to the static NFS PV created by pv-sqlite.yaml
+  storageClassName: ""
+  volumeName: {{ include "kube-dashboard.fullname" . }}-sqlite
+  {{- end }}
+{{- end }}

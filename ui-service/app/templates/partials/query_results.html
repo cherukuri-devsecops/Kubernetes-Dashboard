@@ -1,0 +1,40 @@
+{% if error %}
+<div class="alert err" style="padding:12px 14px;background:#3a1820;border:1px solid #5c2530;border-radius:6px;color:#ff8a9a;font-family:ui-monospace,Menlo,monospace;font-size:13px">
+  <i class="ti ti-alert-circle"></i> {{ error }}
+</div>
+{% elif result %}
+<div style="font-size:12px;color:var(--faint);margin-bottom:8px">
+  {{ result.total }} row{{ '' if result.total == 1 else 's' }}
+</div>
+<div style="overflow:auto;border:1px solid var(--border,#252830);border-radius:6px">
+<table class="datatable" style="width:100%;border-collapse:collapse;font-size:13px">
+  <thead>
+    <tr style="background:var(--bg-2,#11141a)">
+      {% for c in result.cols %}
+      <th style="text-align:left;padding:9px 12px;border-bottom:1px solid var(--border,#252830);
+                 color:var(--faint);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.4px">{{ c }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in result.rows %}
+    <tr style="border-bottom:1px solid var(--border,#1a1d24)">
+      {% for c in result.cols %}
+      <td style="padding:8px 12px;vertical-align:top;font-family:ui-monospace,Menlo,monospace;color:var(--fg,#e6e6e6)">
+        {%- set v = row[c] -%}
+        {%- if v is none -%}<span style="color:var(--faint)">—</span>
+        {%- elif v == '' -%}<span style="color:var(--faint)">—</span>
+        {%- else -%}{{ v }}{%- endif -%}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    {% if not result.rows %}
+    <tr><td colspan="{{ result.cols|length or 1 }}" style="padding:30px;text-align:center;color:var(--faint)">No matching rows.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% elif q %}
+<div style="color:var(--faint);font-size:13px;padding:20px;text-align:center">No result.</div>
+{% endif %}

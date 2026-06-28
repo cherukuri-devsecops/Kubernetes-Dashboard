@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Setup Cluster — k8s Observability</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/dist/tabler-icons.min.css">
+<style>
+html,body{height:100%;margin:0}
+.setup-page{
+  min-height:100vh;background:var(--bg);background-image:var(--bg-gradient);
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:40px 20px;
+}
+.setup-card {
+  background: rgba(13, 21, 41, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 40px 44px;
+  width: 100%;
+  max-width: 580px;
+  backdrop-filter: blur(24px);
+  box-shadow: var(--glass-shadow);
+  transition: var(--transition);
+}
+.setup-card:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.setup-header{display:flex;align-items:center;gap:16px;margin-bottom:32px}
+.setup-title{font-size:22px;font-weight:800;color:var(--text);letter-spacing:-0.01em}
+.setup-sub{color:var(--muted);font-size:12px;margin-top:4px}
+
+.mode-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:32px}
+.mode-tab {
+  padding: 14px 10px;
+  background: rgba(5, 8, 20, 0.4);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  cursor: pointer;
+  text-align: center;
+  transition: var(--transition);
+}
+.mode-tab:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  transform: translateY(-1px);
+}
+.mode-tab.selected {
+  border-color: var(--teal);
+  background: rgba(6, 182, 212, 0.08);
+  box-shadow: inset 0 0 12px rgba(6, 182, 212, 0.05);
+}
+.mode-tab i{font-size:24px;display:block;margin-bottom:6px;color:var(--muted);transition: var(--transition);}
+.mode-tab.selected i{color:var(--teal);filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.4));}
+.mode-tab .lbl{font-size:12px;font-weight:700;color:var(--text)}
+.mode-tab .sub{font-size:10px;color:var(--muted);margin-top:3px}
+
+.form-group{margin-bottom:20px}
+.form-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  font-weight: 700;
+  display: block;
+  margin-bottom: 8px;
+}
+.form-input {
+  width: 100%;
+  background: rgba(5, 8, 20, 0.5);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  transition: var(--transition);
+}
+.form-input:focus {
+  border-color: var(--teal);
+  background: rgba(5, 8, 20, 0.8);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);
+}
+textarea.form-input{resize:vertical;min-height:90px}
+.form-hint{font-size:11px;color:var(--muted);margin-top:6px}
+
+.submit-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, var(--teal), var(--blue));
+  color: #fff;
+  border: none;
+  border-radius: var(--r);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: .02em;
+  transition: var(--transition);
+  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3);
+}
+.submit-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(6, 182, 212, 0.5);
+}
+
+.setup-error {
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  border-radius: var(--r);
+  padding: 12px 16px;
+  color: var(--red);
+  font-size: 12px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 32px;
+  padding: 8px 16px;
+  background: rgba(5, 8, 20, 0.4);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.user-chip img{width:22px;height:22px;border-radius:50%}
+.section-panel{display:none}
+.section-panel.show{display:block}
+</style>
+</head>
+<body>
+<div class="setup-page">
+  <div class="setup-card">
+
+    <div class="setup-header">
+      <svg width="36" height="36" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg">
+        <defs><clipPath id="hc"><path d="M110 30 L179 70 L179 150 L110 190 L41 150 L41 70 Z"/></clipPath></defs>
+        <g clip-path="url(#hc)">
+          <circle cx="110" cy="110" r="62" fill="none" stroke="#38d9a9" stroke-width="1.5" opacity="0.4"/>
+          <circle cx="110" cy="110" r="42" fill="none" stroke="#38d9a9" stroke-width="1.5" opacity="0.55"/>
+          <circle cx="110" cy="110" r="22" fill="none" stroke="#38d9a9" stroke-width="1.5" opacity="0.7"/>
+          <line x1="110" y1="110" x2="166" y2="62" stroke="#38d9a9" stroke-width="2" stroke-linecap="round"/>
+        </g>
+        <path d="M110 30 L179 70 L179 150 L110 190 L41 150 L41 70 Z" fill="none" stroke="#d6e1f1" stroke-width="3.5" stroke-linejoin="round"/>
+        <circle cx="110" cy="30" r="7" fill="#38d9a9"/>
+        <circle cx="110" cy="110" r="9" fill="#38d9a9"/>
+      </svg>
+      <div>
+        <div class="setup-title">Connect to a cluster</div>
+        <div class="setup-sub">Choose how to authenticate with your Kubernetes cluster</div>
+      </div>
+    </div>
+
+    {% if user %}
+    <div class="user-chip">
+      {% if user.picture %}<img src="{{ user.picture }}" alt="">{% endif %}
+      Signed in as <strong>{{ user.email }}</strong>
+      &nbsp;·&nbsp;<a href="{{ url_for('auth.logout') }}" style="color:var(--faint)">Sign out</a>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="setup-error"><i class="ti ti-alert-circle" style="flex-shrink:0;margin-top:1px"></i><span>{{ error }}</span></div>
+    {% endif %}
+
+    <!-- Mode selector -->
+    <div class="mode-tabs" id="modeTabs">
+      <div class="mode-tab selected" onclick="selectMode('kubeconfig', this)">
+        <i class="ti ti-file-code"></i>
+        <div class="lbl">Kubeconfig</div>
+        <div class="sub">Upload config file</div>
+      </div>
+      <div class="mode-tab" onclick="selectMode('token', this)">
+        <i class="ti ti-key"></i>
+        <div class="lbl">Bearer token</div>
+        <div class="sub">Server URL + token</div>
+      </div>
+      <div class="mode-tab" onclick="selectMode('incluster', this)">
+        <i class="ti ti-circle-dot"></i>
+        <div class="lbl">In-cluster</div>
+        <div class="sub">Running inside K8s</div>
+      </div>
+    </div>
+
+    <!-- Kubeconfig upload -->
+    <form id="form-kubeconfig" action="/setup" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="kubeconfig">
+      <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+      <div class="section-panel show" id="panel-kubeconfig">
+        <div class="form-group">
+          <label class="form-label">Kubeconfig file</label>
+          <input type="file" name="kubeconfig" class="form-input" accept=".yaml,.yml,.json,text/plain" required>
+          <div class="form-hint">Usually at <code>~/.kube/config</code> on your local machine</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Context (optional)</label>
+          <input type="text" name="context" class="form-input" placeholder="leave blank to use current context">
+        </div>
+        <button type="submit" class="submit-btn">
+          <i class="ti ti-plug-connected"></i> Connect to cluster
+        </button>
+      </div>
+    </form>
+
+    <!-- Token -->
+    <form id="form-token" action="/setup" method="post" style="display:none">
+      <input type="hidden" name="mode" value="token">
+      <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+      <div class="form-group">
+        <label class="form-label">API Server URL</label>
+        <input type="url" name="server" class="form-input" placeholder="https://your-cluster.example.com:6443" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Bearer Token</label>
+        <textarea name="token" class="form-input" rows="4"
+          placeholder="eyJhbGciOiJSUzI1NiIsImtpZCI6Ii..." required></textarea>
+        <div class="form-hint">Service account token or user token with cluster read access</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">CA Certificate (PEM) <span style="font-weight:normal;opacity:.7">— optional, required for self-signed CAs</span></label>
+        <textarea name="ca_cert" class="form-input" rows="4"
+          placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+        <div class="form-hint">Paste the cluster CA certificate to enable TLS verification</div>
+      </div>
+      <button type="submit" class="submit-btn">
+        <i class="ti ti-plug-connected"></i> Connect to cluster
+      </button>
+    </form>
+
+    <!-- In-cluster -->
+    <form id="form-incluster" action="/setup" method="post" style="display:none">
+      <input type="hidden" name="mode" value="incluster">
+      <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:20px">
+        <div style="color:var(--text);font-size:13px;margin-bottom:8px">
+          <i class="ti ti-info-circle" style="color:var(--info)"></i> In-cluster mode
+        </div>
+        <div style="color:var(--muted);font-size:12px;line-height:1.7">
+          Uses the service account mounted at <code>/var/run/secrets/kubernetes.io/serviceaccount</code>.<br>
+          Only works when the dashboard is deployed inside the cluster with a ClusterRole binding.
+        </div>
+      </div>
+      <button type="submit" class="submit-btn">
+        <i class="ti ti-plug-connected"></i> Use in-cluster config
+      </button>
+    </form>
+
+  </div>
+</div>
+
+<script>
+function selectMode(mode, el) {
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('selected'));
+  el.classList.add('selected');
+  ['kubeconfig','token','incluster'].forEach(m => {
+    const f = document.getElementById('form-'+m);
+    if(f) f.style.display = m === mode ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>

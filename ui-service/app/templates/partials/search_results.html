@@ -1,0 +1,11 @@
+{% for r in results %}
+<a class="sr-item" href="{{ r.url }}">
+  <span class="sr-type">{{ r.type }}</span>
+  <span class="sr-name">{{ r.name }}</span>
+  <span class="sr-ns">{{ r.ns }}</span>
+</a>
+{% else %}
+{% if request.args.get('q') %}
+<div class="sr-item" style="color:var(--faint)">No results</div>
+{% endif %}
+{% endfor %}

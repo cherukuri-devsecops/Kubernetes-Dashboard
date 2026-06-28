@@ -1,0 +1,203 @@
+services:
+
+  # ── UI Service (Flask) ──────────────────────────────────────────────────────
+  ui-service:
+    build:
+      context: ./ui-service
+      dockerfile: ./Dockerfile
+    image: cherukuri1991/kube-dashboard-ui:latest
+    container_name: kube-dashboard-ui
+    ports:
+      - "5002:5000"
+    user: "0:0"
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-change-me}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI:-http://localhost:5002/auth/callback}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-0}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-0}
+      - ALLOWED_EMAILS=${ALLOWED_EMAILS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOKI_URL=${LOKI_URL:-http://loki:3100}
+      - SQLITE_PATH=${SQLITE_PATH:-/data/dashboard.db}
+      - CLUSTER_SCOPE=${CLUSTER_SCOPE:-local}
+      - DB_POLLER_ENABLED=${DB_POLLER_ENABLED:-1}
+      - EVENT_POLL_INTERVAL=${EVENT_POLL_INTERVAL:-30}
+      - METRIC_POLL_INTERVAL=${METRIC_POLL_INTERVAL:-60}
+      - BACKEND_SERVICE_URL=http://backend-service:8000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_SERVICE_NAME=kube-dashboard-ui
+    volumes:
+      - ./sqlite_data:/data
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_healthy
+      backend-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kube-net
+
+  # ── Backend API (FastAPI) ───────────────────────────────────────────────────
+  backend-service:
+    build:
+      context: ./backend-service
+      dockerfile: ./Dockerfile
+    image: cherukuri1991/kube-dashboard-backend:latest
+    container_name: kube-dashboard-backend
+    ports:
+      - "8001:8000"
+    user: "0:0"
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOKI_URL=${LOKI_URL:-http://loki:3100}
+      - PROMETHEUS_URL=http://prometheus:9090
+      - UI_ORIGIN=http://localhost:5002
+      - SQLITE_PATH=${SQLITE_PATH:-/data/dashboard.db}
+      - JAEGER_URL=${JAEGER_URL:-}
+      - TEMPO_URL=${TEMPO_URL:-}
+      - CLUSTER_SCOPE=${CLUSTER_SCOPE:-local}
+      - TEMPO_URL=http://tempo:3200
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_SERVICE_NAME=kube-dashboard-backend
+    volumes:
+      - ./sqlite_data:/data
+      - ~/.kube/config:/root/.kube/config:ro
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - kube-net
+
+  # ── Loki (log store) ────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: kube-dashboard-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    user: "0:0"
+    command: -config.file=/etc/loki/config.yaml -config.expand-env=true
+    environment:
+      - LOKI_S3_ENDPOINT=${LOKI_S3_ENDPOINT}
+      - LOKI_S3_BUCKET=${LOKI_S3_BUCKET}
+      - LOKI_S3_REGION=${LOKI_S3_REGION:-us-east-1}
+      - LOKI_S3_ACCESS_KEY_ID=${LOKI_S3_ACCESS_KEY_ID}
+      - LOKI_S3_SECRET_ACCESS_KEY=${LOKI_S3_SECRET_ACCESS_KEY}
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - kube-net
+
+  # ── Prometheus (metrics store) ──────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: kube-dashboard-prometheus
+    restart: unless-stopped
+    user: "0:0"
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus_data:/prometheus
+    networks:
+      - kube-net
+
+  # ── Tempo (trace store) ────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: kube-dashboard-tempo
+    restart: unless-stopped
+    command: -config.file=/etc/tempo/config.yaml
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo/config.yaml:ro
+    networks:
+      - kube-net
+
+  # ── Fluent Bit (log collector → Loki) ──────────────────────────────────────
+  # Requires Linux host paths — enable with: docker compose --profile linux up
+  fluent-bit:
+    profiles: [linux]
+    image: fluent/fluent-bit:3.0
+    container_name: kube-dashboard-fluent-bit
+    restart: unless-stopped
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - kube-net
+
+  # ── Node Exporter (host metrics → Prometheus) ───────────────────────────────
+  # Requires Linux host paths — enable with: docker compose --profile linux up
+  node-exporter:
+    profiles: [linux]
+    image: prom/node-exporter:v1.8.0
+    container_name: kube-dashboard-node-exporter
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - kube-net
+
+  # ── cAdvisor (container metrics → Prometheus) ──────────────────────────────
+  # Requires Linux host paths — enable with: docker compose --profile linux up
+  cadvisor:
+    profiles: [linux]
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: kube-dashboard-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - kube-net
+
+networks:
+  kube-net:
+    driver: bridge

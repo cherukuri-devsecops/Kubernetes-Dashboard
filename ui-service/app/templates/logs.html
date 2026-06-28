@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% set counts = namespace(err=0, warn=0, info=0) %}
+{% for pod_name, cls, line in agg_logs %}
+  {% if cls == 'log-err' %}{% set counts.err = counts.err + 1 %}
+  {% elif cls == 'log-warn' %}{% set counts.warn = counts.warn + 1 %}
+  {% elif cls == 'log-info' %}{% set counts.info = counts.info + 1 %}
+  {% endif %}
+{% endfor %}
+
+<div class="page-head">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <h1>Log aggregator</h1>
+      <div class="sub">Fetch and stream logs from multiple pods simultaneously</div>
+      {% if agg_logs %}
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <span class="badge err"><i class="ti ti-alert-circle"></i> {{ counts.err }} error{% if counts.err != 1 %}s{% endif %}</span>
+        <span class="badge warn"><i class="ti ti-alert-triangle"></i> {{ counts.warn }} warn{% if counts.warn != 1 %}s{% endif %}</span>
+        <span class="badge info"><i class="ti ti-info-circle"></i> {{ counts.info }} info</span>
+        <span class="badge gray">{{ agg_logs|length }} lines total</span>
+      </div>
+      {% endif %}
+    </div>
+    {% if agg_logs %}
+    <button class="btn" onclick="exportLog()" title="Download current log as .log file">
+      <i class="ti ti-download"></i> Export log
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Sticky filter bar -->
+<div style="position:sticky;top:0;z-index:20;background:var(--bg,#0d0f14);padding:10px 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px">
+<form method="get" id="logForm">
+<div style="display:grid;grid-template-columns:220px 1fr auto auto;gap:10px;align-items:end">
+  <div>
+    <label style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);display:block;margin-bottom:5px">Namespace</label>
+    <select name="ns" style="width:100%;background:var(--panel);color:var(--text);border:1px solid var(--border);padding:7px 10px;font-family:var(--mono);font-size:12px;border-radius:var(--r)"
+            onchange="this.form.submit()">
+      <option value="">all namespaces</option>
+      {% for n in namespaces %}
+      <option value="{{ n }}" {{ 'selected' if n == selected_ns }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);display:block;margin-bottom:5px">
+      Pods ({{ running_pods|length }} running) — select to fetch logs
+    </label>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;min-height:40px">
+      {% for p in running_pods %}
+      <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+                    background:var(--bg);border:1px solid var(--border);border-radius:3px;
+                    padding:3px 8px;font-size:11px;
+                    {{ 'border-color:var(--accent);color:var(--accent)' if p.metadata.name in selected_pods else 'color:var(--muted)' }}">
+        <input type="checkbox" name="pod" value="{{ p.metadata.name }}"
+               {{ 'checked' if p.metadata.name in selected_pods }}
+               style="accent-color:var(--accent)">
+        <span class="dot ok" style="width:6px;height:6px;flex-shrink:0"></span>
+        {{ p.metadata.namespace }}/{{ p.metadata.name }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div>
+    <label style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);display:block;margin-bottom:5px">Tail</label>
+    <input type="number" name="tail" value="{{ tail }}" min="10" max="10000"
+           style="width:80px;background:var(--panel);color:var(--text);border:1px solid var(--border);padding:7px 10px;font-family:var(--mono);font-size:12px;border-radius:var(--r)">
+  </div>
+  <div>
+    <button type="submit" class="btn" style="height:36px">
+      <i class="ti ti-refresh"></i> Fetch logs
+    </button>
+  </div>
+</div>
+</form>
+</div>
+
+<!-- Live stream controls -->
+{% if selected_pods %}
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+  <button class="btn" id="liveBtn" style="border-color:var(--accent);color:var(--accent)">
+    <i class="ti ti-player-play"></i> Live stream selected pods
+  </button>
+  <button class="btn" id="stopBtn" style="display:none">
+    <i class="ti ti-player-stop"></i> Stop
+  </button>
+  <button class="btn" onclick="clearBox()">
+    <i class="ti ti-eraser"></i> Clear
+  </button>
+  <span id="live-status" style="font-size:11px;color:var(--faint)"></span>
+</div>
+{% endif %}
+
+<!-- Log output -->
+<div class="logbox" id="logbox" style="height:580px">
+{% if agg_logs %}
+  {% for pod_name, cls, line in agg_logs %}
+  <div class="log-line {{ cls }}" data-line="{{ line }}">
+    <span class="ll-pod">{{ pod_name }}</span>
+    {% if ' ' in line and line[0].isdigit() %}
+      {% set parts = line.split(' ', 1) %}
+      <span class="log-ts">{{ parts[0] }}</span>
+      <span class="log-msg{% if parts[1]|length > 300 %} ll-trunc{% endif %}">
+        {%- if parts[1]|length > 300 -%}
+          <span class="ll-preview">{{ parts[1][:300] }}<span class="ll-dots"> ···</span></span>
+          <span class="ll-full">{{ parts[1] }}</span>
+        {%- else -%}{{ parts[1] }}{%- endif -%}
+      </span>
+    {% else %}
+      <span class="log-msg{% if line|length > 300 %} ll-trunc{% endif %}">
+        {%- if line|length > 300 -%}
+          <span class="ll-preview">{{ line[:300] }}<span class="ll-dots"> ···</span></span>
+          <span class="ll-full">{{ line }}</span>
+        {%- else -%}{{ line }}{%- endif -%}
+      </span>
+    {% endif %}
+    <button class="ll-copy" title="Copy line" onclick="llCopy(this)"><i class="ti ti-copy"></i></button>
+  </div>
+  {% endfor %}
+{% elif selected_pods %}
+  <div class="log-line"><span class="log-msg" style="color:var(--faint)">(no logs returned for selected pods)</span></div>
+{% else %}
+  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--faint)">
+    <i class="ti ti-file-text" style="font-size:40px;opacity:.25;margin-bottom:14px;display:block"></i>
+    Select one or more running pods above and click <strong style="color:var(--text);margin:0 4px">Fetch logs</strong> to view aggregated output.
+  </div>
+{% endif %}
+</div>
+
+<style>
+.ll-pod  { color:var(--teal,#06b6d4); min-width:180px; flex-shrink:0; font-size:11px; }
+.ll-dots { color:var(--muted); }
+.ll-full { display:none; }
+.log-msg.ll-trunc { cursor:pointer; }
+
+.ll-copy {
+  opacity: 0;
+  transition: opacity .15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0 3px;
+  flex-shrink: 0;
+  font-size: 12px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.ll-copy:hover { background: var(--border2); color: var(--teal); }
+.log-line:hover .ll-copy { opacity: 1; }
+</style>
+
+<script>
+const box = document.getElementById('logbox');
+box.scrollTop = box.scrollHeight;
+
+// ── Expand / collapse truncated lines (event delegation) ───────────────────
+box.addEventListener('click', function (e) {
+  const msg = e.target.closest('.ll-trunc');
+  if (!msg || e.target.closest('.ll-copy')) return;
+  const preview = msg.querySelector('.ll-preview');
+  const full    = msg.querySelector('.ll-full');
+  if (!full) return;
+  const open = full.style.display === 'inline';
+  full.style.display    = open ? 'none'   : 'inline';
+  preview.style.display = open ? ''       : 'none';
+});
+
+// ── Copy a log line ────────────────────────────────────────────────────────
+function llCopy(btn) {
+  const text = btn.closest('.log-line')?.dataset.line || '';
+  navigator.clipboard.writeText(text).then(() => {
+    const ic = btn.querySelector('i');
+    if (ic) ic.className = 'ti ti-check';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => {
+      if (ic) ic.className = 'ti ti-copy';
+      btn.style.color = '';
+    }, 1500);
+  });
+}
+
+// ── Clear the logbox ───────────────────────────────────────────────────────
+function clearBox() {
+  box.innerHTML = '';
+}
+
+// ── Export current box contents as a .log file ─────────────────────────────
+function exportLog() {
+  const lines = Array.from(box.querySelectorAll('.log-line')).map(row => {
+    const pod = row.querySelector('.ll-pod')?.textContent?.trim() || '';
+    const raw = row.dataset.line || '';
+    return pod ? `[${pod}] ${raw}` : raw;
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'logs-' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.log';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Safe HTML escaping for live-streamed content ───────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Build a DOM row for live-streamed lines ────────────────────────────────
+function makeLiveLine(podName, cls, text) {
+  const row = document.createElement('div');
+  row.className    = 'log-line live ' + (cls || '');
+  row.dataset.line = text;
+
+  const podSpan = document.createElement('span');
+  podSpan.className   = 'll-pod';
+  podSpan.textContent = podName;
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'log-msg';
+  if (text.length > 300) {
+    msgSpan.classList.add('ll-trunc');
+    msgSpan.innerHTML =
+      `<span class="ll-preview">${escHtml(text.slice(0, 300))}<span class="ll-dots"> ···</span></span>` +
+      `<span class="ll-full" style="display:none">${escHtml(text)}</span>`;
+  } else {
+    msgSpan.textContent = text;
+  }
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'll-copy';
+  copyBtn.title     = 'Copy line';
+  copyBtn.innerHTML = '<i class="ti ti-copy"></i>';
+  copyBtn.onclick   = function () { llCopy(this); };
+
+  row.append(podSpan, msgSpan, copyBtn);
+  return row;
+}
+
+// ── Live streaming ─────────────────────────────────────────────────────────
+const liveBtn = document.getElementById('liveBtn');
+const stopBtn = document.getElementById('stopBtn');
+const status  = document.getElementById('live-status');
+const sources = [];
+const ns   = "{{ selected_ns }}";
+const pods = {{ selected_pods | tojson }};
+const tail = {{ tail }};
+
+if (liveBtn) {
+  liveBtn.onclick = () => {
+    sources.forEach(es => es.close()); sources.length = 0;
+    pods.forEach(pod => {
+      const es = new EventSource(
+        `/logs/stream?pod=${encodeURIComponent(pod)}&ns=${encodeURIComponent(ns)}&tail=${tail}`
+      );
+      es.onmessage = ev => {
+        const [pname, cls, ...rest] = ev.data.split('|||');
+        box.appendChild(makeLiveLine(pname, cls, rest.join('|||')));
+        box.scrollTop = box.scrollHeight;
+      };
+      sources.push(es);
+    });
+    status.textContent = `Streaming ${pods.length} pod(s)…`;
+    liveBtn.style.display = 'none';
+    stopBtn.style.display = '';
+  };
+
+  stopBtn.onclick = () => {
+    sources.forEach(es => es.close()); sources.length = 0;
+    liveBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    status.textContent = 'Stopped.';
+  };
+}
+</script>
+{% endblock %}

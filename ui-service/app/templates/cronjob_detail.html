@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div class="breadcrumb"><a href="/jobs">Jobs &amp; CronJobs</a> › {{ cj.metadata.namespace }}</div>
+  <h1>{{ cj.metadata.name }}</h1>
+  <div class="sub">{{ cj.metadata.namespace }} / cronjob</div>
+  <div class="actions">
+    {% if can('update', 'cronjobs', cj.metadata.namespace) %}
+    <button class="btn" onclick="openEditor('CronJob','{{ cj.metadata.namespace }}','{{ cj.metadata.name }}')"
+            title="Edit YAML in resource editor">
+      <i class="ti ti-code"></i> Edit YAML
+    </button>
+    {% endif %}
+    {% if can('delete', 'cronjobs', cj.metadata.namespace) %}
+    <button class="btn danger"
+            onclick="deleteResource('CronJob','{{ cj.metadata.namespace }}','{{ cj.metadata.name }}','/jobs')">
+      <i class="ti ti-trash"></i> Delete
+    </button>
+    {% else %}
+    <span class="btn danger rbac-denied" title="You do not have permission to delete cronjobs">
+      <i class="ti ti-trash"></i> Delete
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Meta grid -->
+<div class="meta-grid">
+  <div class="meta-cell" style="grid-column:span 2">
+    <div class="meta-key">Schedule</div>
+    <div class="meta-val" style="font-family:var(--mono);font-size:15px;color:var(--accent)">{{ cj.spec.schedule or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Status</div>
+    <div class="meta-val">
+      {% if cj.spec.suspend %}
+        <span class="badge warn">Suspended</span>
+      {% else %}
+        <span class="badge ok">Active</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Active Jobs</div>
+    <div class="meta-val">{{ cj.status.active|length if cj.status.active else 0 }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Last Run</div>
+    <div class="meta-val" style="color:var(--faint)">
+      {{ age(cj.status.last_schedule_time) + ' ago' if cj.status.last_schedule_time else '—' }}
+    </div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Concurrency Policy</div>
+    <div class="meta-val">{{ cj.spec.concurrency_policy or '—' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Successful History</div>
+    <div class="meta-val">{{ cj.spec.successful_jobs_history_limit if cj.spec.successful_jobs_history_limit is not none else '3' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Failed History</div>
+    <div class="meta-val">{{ cj.spec.failed_jobs_history_limit if cj.spec.failed_jobs_history_limit is not none else '1' }}</div>
+  </div>
+  <div class="meta-cell">
+    <div class="meta-key">Age</div>
+    <div class="meta-val">{{ age(cj.metadata.creation_timestamp) }}</div>
+  </div>
+</div>
+
+<!-- Labels -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:20px;font-size:12px">
+  <div>
+    <div style="color:var(--faint);margin-bottom:6px">Labels</div>
+    {% if cj.metadata.labels %}
+    <div class="tags">{% for k,v in cj.metadata.labels.items() %}<span class="tag">{{ k }}={{ v }}</span>{% endfor %}</div>
+    {% else %}<div style="color:var(--faint)">—</div>{% endif %}
+  </div>
+</div>
+
+<!-- Child Jobs -->
+{% if child_jobs %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Jobs <span class="cnt">{{ child_jobs|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Status</th><th>Completions</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for j in child_jobs %}
+  {% set done = (j.status.succeeded or 0) >= (j.spec.completions or 1) %}
+  {% set failed = (j.status.failed or 0) > 0 %}
+  <tr>
+    <td><a class="row-link" href="/jobs/{{ j.metadata.namespace }}/{{ j.metadata.name }}">{{ j.metadata.name }}</a></td>
+    <td>
+      {% if done %}<span class="badge ok">Complete</span>
+      {% elif failed %}<span class="badge err">Failed</span>
+      {% else %}<span class="badge warn">Running</span>{% endif %}
+    </td>
+    <td>{{ j.status.succeeded or 0 }}/{{ j.spec.completions or 1 }}</td>
+    <td style="color:var(--faint)">{{ age(j.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Jobs <span class="cnt">0</span></div>
+</div>
+<div style="color:var(--faint);font-size:13px;margin-bottom:20px;padding:12px">No child jobs found.</div>
+{% endif %}
+
+<!-- Events -->
+{% if events %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Events <span class="cnt">{{ events|length }}</span></div>
+</div>
+<div class="table-wrap" style="padding:0 14px;margin-bottom:20px">
+  <div class="ev-list">
+  {% for e in events %}
+  <div class="ev-row">
+    <span class="ev-type {{ e.type }}">{{ e.type }}</span>
+    <span class="ev-reason">{{ e.reason }}</span>
+    <span class="ev-msg" title="{{ e.message }}">{{ e.message }}</span>
+    <span class="ev-count">×{{ e.count }}</span>
+    <span class="ev-age">{{ age(e.last_timestamp) }}</span>
+  </div>
+  {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Annotations -->
+{% if cj.metadata.annotations %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Annotations <span class="cnt">{{ cj.metadata.annotations|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th style="width:35%">Key</th><th>Value</th></tr></thead>
+  <tbody>
+  {% for k, v in cj.metadata.annotations.items() %}
+  {% if 'last-applied' not in k %}
+  <tr>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--muted);vertical-align:top">{{ k }}</td>
+    <td style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:pre-wrap;word-break:break-all">{{ v }}</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- Manifest YAML -->
+<div class="section-head" style="margin-top:24px;margin-bottom:10px">
+  <div class="section-title">Manifest</div>
+</div>
+<details style="margin-bottom:24px;border:1px solid var(--border,#252830);border-radius:6px;background:var(--bg-2,#11141a)">
+  <summary style="padding:10px 14px;cursor:pointer;font-size:13px;color:var(--muted);user-select:none">
+    <i class="ti ti-code"></i> Show YAML
+    <button type="button" id="copyYaml" class="btn" style="float:right;padding:2px 10px;font-size:11px">
+      <i class="ti ti-copy"></i> Copy
+    </button>
+  </summary>
+  <pre id="manifestYaml" style="margin:0;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--fg);max-height:600px">{{ manifest_yaml }}</pre>
+</details>
+
+<script>
+const cy = document.getElementById('copyYaml');
+if (cy) cy.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const txt = document.getElementById('manifestYaml').innerText;
+  navigator.clipboard.writeText(txt).then(() => {
+    const o = cy.innerHTML; cy.innerHTML = '<i class="ti ti-check"></i> Copied';
+    setTimeout(() => cy.innerHTML = o, 1200);
+  });
+});
+</script>
+{% endblock %}

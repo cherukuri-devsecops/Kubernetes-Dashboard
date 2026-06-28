@@ -1,0 +1,67 @@
+{{- if .Values.loki.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-loki
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "loki") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "loki") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-dashboard.labels" . | nindent 8 }}
+        {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "loki") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+      containers:
+        - name: loki
+          image: "{{ .Values.loki.image.repository }}:{{ .Values.loki.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - -config.file=/etc/loki/config.yaml
+            - -config.expand-env=true
+          ports:
+            - name: http
+              containerPort: 3100
+              protocol: TCP
+            - name: grpc
+              containerPort: 9096
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ .Values.loki.existingSecret | default (printf "%s-loki-s3" (include "kube-dashboard.fullname" .)) }}
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki/config.yaml
+              subPath: config.yaml
+          resources:
+            {{- toYaml .Values.loki.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kube-dashboard.fullname" . }}-loki-config
+{{- end }}

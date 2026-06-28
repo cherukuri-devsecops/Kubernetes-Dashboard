@@ -1,0 +1,103 @@
+{{- if .Values.uiService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kube-dashboard.fullname" . }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kube-dashboard.labels" . | nindent 4 }}
+    {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "ui-service") | nindent 4 }}
+spec:
+  replicas: {{ .Values.uiService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "ui-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kube-dashboard.labels" . | nindent 8 }}
+        {{- include "kube-dashboard.selectorLabels" (dict "root" . "component" "ui-service") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: ui-service
+          image: "{{ .Values.uiService.image.repository }}:{{ .Values.uiService.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.uiService.port }}
+              protocol: TCP
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: LOG_LEVEL
+              value: {{ .Values.uiService.env.logLevel | quote }}
+            - name: CLUSTER_SCOPE
+              value: {{ .Values.uiService.env.clusterScope | quote }}
+            - name: DB_POLLER_ENABLED
+              value: {{ .Values.uiService.env.dbPollerEnabled | quote }}
+            - name: EVENT_POLL_INTERVAL
+              value: {{ .Values.uiService.env.eventPollInterval | quote }}
+            - name: METRIC_POLL_INTERVAL
+              value: {{ .Values.uiService.env.metricPollInterval | quote }}
+            - name: SESSION_COOKIE_SECURE
+              value: {{ .Values.uiService.env.sessionCookieSecure | quote }}
+            - name: TRUST_PROXY_HEADERS
+              value: {{ .Values.uiService.env.trustProxyHeaders | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.uiService.env.otelServiceName | quote }}
+            - name: SQLITE_PATH
+              value: /data/dashboard.db
+            - name: LOKI_URL
+              value: "http://{{ include "kube-dashboard.fullname" . }}-loki:{{ .Values.loki.port }}"
+            - name: BACKEND_SERVICE_URL
+              value: "http://{{ include "kube-dashboard.fullname" . }}-backend:{{ .Values.backendService.port }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://{{ include "kube-dashboard.fullname" . }}-tempo:{{ .Values.tempo.otlpGrpcPort }}"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: SECRET_KEY
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: AUTH_JWT_SECRET
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: AUTH_SERVICE_URL
+            - name: OAUTH_REDIRECT_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: OAUTH_REDIRECT_URI
+            - name: ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.uiService.secretName }}
+                  key: ALLOWED_EMAILS
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /data
+          livenessProbe:
+            {{- toYaml .Values.uiService.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.uiService.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.uiService.resources | nindent 12 }}
+      volumes:
+        - name: sqlite-data
+          {{- if .Values.sqlite.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.sqlite.persistence.existingClaim | default (printf "%s-sqlite" (include "kube-dashboard.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

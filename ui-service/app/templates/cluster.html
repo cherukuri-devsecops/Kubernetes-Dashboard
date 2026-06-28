@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Cluster resources</h1>
+  <div class="sub">All workload types, storage, and network resources</div></div>
+
+<!-- Summary counts -->
+<div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+  <div class="stat-card"><div class="lbl">StatefulSets</div><div class="val">{{ sts|length }}</div></div>
+  <div class="stat-card"><div class="lbl">DaemonSets</div><div class="val">{{ ds|length }}</div></div>
+  <div class="stat-card"><div class="lbl">Jobs</div><div class="val">{{ jobs|length }}</div></div>
+  <div class="stat-card"><div class="lbl">CronJobs</div><div class="val">{{ crons|length }}</div></div>
+  <div class="stat-card"><div class="lbl">Ingresses</div><div class="val">{{ ingresses|length }}</div></div>
+  <div class="stat-card"><div class="lbl">PersistentVolumes</div><div class="val">{{ pvs|length }}</div></div>
+  <div class="stat-card"><div class="lbl">PVCs</div><div class="val">{{ pvcs|length }}</div></div>
+  <div class="stat-card"><div class="lbl">ConfigMaps</div><div class="val">{{ configmaps|length }}</div></div>
+  <div class="stat-card"><div class="lbl">Secrets</div><div class="val">{{ secrets|length }}</div></div>
+</div>
+
+<!-- Node resource usage (if metrics available) -->
+{% if live_nodes %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Node live usage <span style="color:var(--accent);font-size:11px;margin-left:6px"><i class="ti ti-circle-dot"></i> metrics-server</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Node</th><th>CPU live</th><th>Memory live</th><th>Pods</th></tr></thead>
+  <tbody>
+  {% for n in nodes %}
+  {% set m = live_nodes.get(n.metadata.name) %}
+  <tr>
+    <td><a class="row-link" href="/nodes/{{ n.metadata.name }}">{{ n.metadata.name }}</a></td>
+    <td style="color:var(--accent);font-size:12px">{{ fmt_cpu(m.cpu) if m else '—' }}</td>
+    <td style="color:var(--accent);font-size:12px">{{ fmt_mem(m.mem) if m else '—' }}</td>
+    <td style="color:var(--faint)">{{ n.status.capacity.get('pods','—') }} max</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- StatefulSets -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">StatefulSets <span class="cnt">{{ sts|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Ready</th><th>Replicas</th><th>Service</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for s in sts %}
+  {% set ready = s.status.ready_replicas or 0 %}{% set desired = s.spec.replicas or 0 %}
+  <tr class="{{ '' if ready==desired else 'tr-warn' }}">
+    <td style="color:var(--faint)">{{ s.metadata.namespace }}</td>
+    <td><strong>{{ s.metadata.name }}</strong></td>
+    <td><span class="dot {{ 'ok' if ready==desired else 'warn' }}"></span>
+        <span class="ready"><span class="r">{{ ready }}</span><span class="s">/{{ desired }}</span></span></td>
+    <td><div class="pbar"><div class="pbar-fill {{ '' if ready==desired else 'warn' }}"
+        style="width:{{ (ready/desired*100)|round|int if desired else 0 }}%"></div></div></td>
+    <td style="color:var(--faint);font-size:12px">{{ s.spec.service_name or '—' }}</td>
+    <td style="color:var(--faint)">{{ age(s.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty"><i class="ti ti-stack-2"></i>No StatefulSets</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- DaemonSets -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">DaemonSets <span class="cnt">{{ ds|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Desired</th><th>Current</th><th>Ready</th><th>Available</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for d in ds %}
+  {% set ok = (d.status.number_ready or 0) == (d.status.desired_number_scheduled or 0) %}
+  <tr class="{{ '' if ok else 'tr-warn' }}">
+    <td style="color:var(--faint)">{{ d.metadata.namespace }}</td>
+    <td><strong>{{ d.metadata.name }}</strong></td>
+    <td>{{ d.status.desired_number_scheduled or 0 }}</td>
+    <td>{{ d.status.current_number_scheduled or 0 }}</td>
+    <td><span class="dot {{ 'ok' if ok else 'warn' }}"></span>{{ d.status.number_ready or 0 }}</td>
+    <td>{{ d.status.number_available or 0 }}</td>
+    <td style="color:var(--faint)">{{ age(d.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-server"></i>No DaemonSets</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- Jobs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Jobs <span class="cnt">{{ jobs|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Status</th><th>Completions</th><th>Duration</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+  {% set done = (j.status.succeeded or 0) > 0 %}
+  {% set failed = (j.status.failed or 0) > 0 %}
+  <tr class="{{ 'tr-err' if failed else '' }}">
+    <td style="color:var(--faint)">{{ j.metadata.namespace }}</td>
+    <td><strong>{{ j.metadata.name }}</strong></td>
+    <td>
+      {% if done %}<span class="badge ok">Complete</span>
+      {% elif failed %}<span class="badge err">Failed</span>
+      {% else %}<span class="badge warn">Running</span>{% endif %}
+    </td>
+    <td>{{ j.status.succeeded or 0 }}/{{ j.spec.completions or 1 }}</td>
+    <td style="color:var(--faint);font-size:12px">
+      {% if j.status.start_time and j.status.completion_time %}
+        {{ age(j.status.completion_time) }}
+      {% else %}—{% endif %}
+    </td>
+    <td style="color:var(--faint)">{{ age(j.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty"><i class="ti ti-hammer"></i>No Jobs</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- CronJobs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">CronJobs <span class="cnt">{{ crons|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Schedule</th><th>Suspended</th><th>Last run</th><th>Active</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for c in crons %}
+  <tr>
+    <td style="color:var(--faint)">{{ c.metadata.namespace }}</td>
+    <td><strong>{{ c.metadata.name }}</strong></td>
+    <td style="font-family:var(--mono);color:var(--accent);font-size:12px">{{ c.spec.schedule }}</td>
+    <td>{% if c.spec.suspend %}<span class="badge warn">Suspended</span>{% else %}<span class="badge ok">Active</span>{% endif %}</td>
+    <td style="color:var(--faint);font-size:12px">
+      {{ age(c.status.last_schedule_time) + ' ago' if c.status.last_schedule_time else '—' }}
+    </td>
+    <td>{{ c.status.active|length if c.status.active else 0 }}</td>
+    <td style="color:var(--faint)">{{ age(c.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-clock"></i>No CronJobs</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- Ingresses -->
+{% if ingresses %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Ingresses <span class="cnt">{{ ingresses|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Class</th><th>Hosts</th><th>Address</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for ing in ingresses %}
+  {% set hosts = ing.spec.rules | map(attribute='host') | list if ing.spec.rules else [] %}
+  {% set addr = ing.status.load_balancer.ingress[0].ip or ing.status.load_balancer.ingress[0].hostname if (ing.status.load_balancer and ing.status.load_balancer.ingress) else '—' %}
+  <tr>
+    <td style="color:var(--faint)">{{ ing.metadata.namespace }}</td>
+    <td><strong>{{ ing.metadata.name }}</strong></td>
+    <td style="font-size:12px;color:var(--muted)">{{ ing.spec.ingress_class_name or '—' }}</td>
+    <td style="font-size:12px;color:var(--info)">{{ hosts|join(', ') or '—' }}</td>
+    <td style="font-size:12px;color:var(--accent)">{{ addr }}</td>
+    <td style="color:var(--faint)">{{ age(ing.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<!-- PersistentVolumes -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">PersistentVolumes <span class="cnt">{{ pvs|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Name</th><th>Capacity</th><th>Access modes</th><th>Reclaim policy</th><th>Status</th><th>Claim</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for pv in pvs %}
+  {% set ph = pv.status.phase or 'Unknown' %}
+  <tr>
+    <td><strong style="font-size:12px">{{ pv.metadata.name }}</strong></td>
+    <td style="color:var(--accent);font-size:12px">
+      {{ pv.spec.capacity.get('storage','—') if pv.spec.capacity else '—' }}</td>
+    <td style="font-size:12px;color:var(--muted)">{{ ','.join(pv.spec.access_modes or []) }}</td>
+    <td style="font-size:12px;color:var(--muted)">{{ pv.spec.reclaim_policy or '—' }}</td>
+    <td><span class="badge {{ 'ok' if ph=='Bound' else 'warn' if ph=='Available' else 'err' }}">{{ ph }}</span></td>
+    <td style="font-size:12px;color:var(--faint)">
+      {% if pv.spec.claim_ref %}{{ pv.spec.claim_ref.namespace }}/{{ pv.spec.claim_ref.name }}{% else %}—{% endif %}</td>
+    <td style="color:var(--faint)">{{ age(pv.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-database"></i>No PersistentVolumes</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- PVCs -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">PersistentVolumeClaims <span class="cnt">{{ pvcs|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Status</th><th>Volume</th><th>Capacity</th><th>Access modes</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for pvc in pvcs %}
+  {% set ph = pvc.status.phase or 'Unknown' %}
+  <tr class="{{ '' if ph=='Bound' else 'tr-warn' }}">
+    <td style="color:var(--faint)">{{ pvc.metadata.namespace }}</td>
+    <td><strong style="font-size:12px">{{ pvc.metadata.name }}</strong></td>
+    <td><span class="badge {{ 'ok' if ph=='Bound' else 'warn' }}">{{ ph }}</span></td>
+    <td style="font-size:12px;color:var(--faint)">{{ pvc.spec.volume_name or '—' }}</td>
+    <td style="color:var(--accent);font-size:12px">
+      {{ pvc.status.capacity.get('storage','—') if pvc.status.capacity else pvc.spec.resources.requests.get('storage','—') if pvc.spec.resources and pvc.spec.resources.requests else '—' }}</td>
+    <td style="font-size:12px;color:var(--muted)">{{ ','.join(pvc.spec.access_modes or []) }}</td>
+    <td style="color:var(--faint)">{{ age(pvc.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="empty"><i class="ti ti-database"></i>No PVCs</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+
+<!-- ConfigMaps (system ones filtered) -->
+{% set user_cms = configmaps | selectattr('metadata.name', 'ne', 'kube-root-ca.crt') | list %}
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">ConfigMaps <span class="cnt">{{ user_cms|length }}</span></div></div>
+<div class="table-wrap" style="margin-bottom:20px"><table>
+  <thead><tr><th>Namespace</th><th>Name</th><th>Data keys</th><th>Age</th></tr></thead>
+  <tbody>
+  {% for cm in user_cms[:40] %}
+  <tr>
+    <td style="color:var(--faint)">{{ cm.metadata.namespace }}</td>
+    <td><strong style="font-size:12px">{{ cm.metadata.name }}</strong></td>
+    <td style="font-size:11px">
+      {% if cm.data %}
+      <div class="tags">
+        {% for k in (cm.data.keys()|list)[:5] %}<span class="tag">{{ k }}</span>{% endfor %}
+        {% if cm.data|length > 5 %}<span class="tag">+{{ cm.data|length - 5 }}</span>{% endif %}
+      </div>
+      {% else %}<span style="color:var(--faint)">—</span>{% endif %}
+    </td>
+    <td style="color:var(--faint)">{{ age(cm.metadata.creation_timestamp) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="empty"><i class="ti ti-file-settings"></i>No ConfigMaps</td></tr>
+  {% endfor %}
+  {% if user_cms|length > 40 %}
+  <tr><td colspan="4" style="text-align:center;color:var(--faint);padding:10px;font-size:12px">
+    … and {{ user_cms|length - 40 }} more</td></tr>
+  {% endif %}
+  </tbody>
+</table></div>
+{% endblock %}

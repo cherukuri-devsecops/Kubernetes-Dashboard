@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% block content %}
+
+<script>document.body.classList.add('overview-body');</script>
+<div class="overview-page">
+<div class="page-header">
+  <div>
+    <div class="page-title">Overview</div>
+    <div class="page-subtitle">High-level overview of your Kubernetes cluster</div>
+  </div>
+  <div class="page-controls">
+    <div class="ctrl-select">
+      <div class="cl">Cluster</div>
+      <i class="ti ti-server" style="color:var(--blue)"></i>
+      <strong>{{ cluster_name }}</strong>
+      <i class="ti ti-chevron-down"></i>
+    </div>
+    <div class="time-range-wrap">
+    <div class="ctrl-select time-range-btn" id="timeRangeBtn" onclick="toggleTimeRangeMenu(event)">
+      <div class="cl">Time range</div>
+      <i class="ti ti-clock" style="color:var(--orange)"></i>
+      <strong id="timeRangeLabel">Last 1 hour</strong>
+      <i class="ti ti-chevron-down" id="timeRangeChevron"></i>
+    </div>
+    <div class="time-range-menu" id="timeRangeMenu">
+      <div class="trm-section">Presets</div>
+      <div class="trm-item" onclick="selectPreset('15m','Last 15 min')">Last 15 min</div>
+      <div class="trm-item" onclick="selectPreset('30m','Last 30 min')">Last 30 min</div>
+      <div class="trm-item trm-active" id="preset-1h" onclick="selectPreset('1h','Last 1 hour')">Last 1 hour</div>
+      <div class="trm-item" onclick="selectPreset('3h','Last 3 hours')">Last 3 hours</div>
+      <div class="trm-item" onclick="selectPreset('6h','Last 6 hours')">Last 6 hours</div>
+      <div class="trm-item" onclick="selectPreset('12h','Last 12 hours')">Last 12 hours</div>
+      <div class="trm-item" onclick="selectPreset('24h','Last 24 hours')">Last 24 hours</div>
+      <div class="trm-item" onclick="selectPreset('7d','Last 7 days')">Last 7 days</div>
+      <div class="trm-divider"></div>
+      <div class="trm-section">Custom range</div>
+      <div class="trm-custom">
+        <label class="trm-lbl">From</label>
+        <input type="datetime-local" id="customFrom" class="trm-input">
+        <label class="trm-lbl">To</label>
+        <input type="datetime-local" id="customTo" class="trm-input">
+        <button class="trm-apply" onclick="applyCustomRange()">Apply</button>
+      </div>
+    </div>
+    </div><!-- /.time-range-wrap -->
+    <div class="refresh-btn" onclick="location.reload()"><i class="ti ti-refresh"></i></div>
+  </div>
+</div>
+
+<div class="content">
+
+<!-- 4 Stat cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-icon blue"><i class="ti ti-server"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">Nodes</div>
+      <div class="stat-value">{{ node_count }}</div>
+      <div class="stat-sub">
+        {% if nodes_ready == node_count %}<i class="ti ti-circle-check ok"></i><span class="ok">All Healthy</span>
+        {% else %}<i class="ti ti-alert-circle warn"></i><span class="warn">{{ nodes_ready }}/{{ node_count }} Ready</span>{% endif %}
+      </div>
+    </div>
+    <canvas class="stat-chart" id="spark-nodes" width="54" height="26"></canvas>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon purple"><i class="ti ti-circles-relation"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">Pods</div>
+      <div class="stat-value">{{ pod_count }}</div>
+      <div class="stat-sub">
+        <i class="ti ti-circle-check ok"></i><span class="ok">Running: {{ pod_running }}</span>
+        {% if pod_pending %}&nbsp;<span class="warn">{{ pod_pending }} pending</span>{% endif %}
+      </div>
+    </div>
+    <canvas class="stat-chart" id="spark-pods" width="54" height="26"></canvas>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon teal"><i class="ti ti-stack-2"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">Deployments</div>
+      <div class="stat-value">{{ dep_count }}</div>
+      <div class="stat-sub"><i class="ti ti-circle-check ok"></i><span class="ok">Up to date</span></div>
+    </div>
+    <canvas class="stat-chart" id="spark-deps" width="54" height="26"></canvas>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon orange"><i class="ti ti-network"></i></div>
+    <div class="stat-body">
+      <div class="stat-label">Services</div>
+      <div class="stat-value">{{ svc_count }}</div>
+      <div class="stat-sub"><i class="ti ti-circle-check ok"></i><span class="ok">Active</span></div>
+    </div>
+    <canvas class="stat-chart" id="spark-svcs" width="54" height="26"></canvas>
+  </div>
+</div>
+
+<!-- Middle: Resource | Donut | Nodes -->
+<div class="mid-grid">
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Resource Usage <i class="ti ti-info-circle"></i></div>
+      {% if cpu_pct %}<span style="font-size:10px;color:var(--teal);display:flex;align-items:center;gap:4px"><i class="ti ti-circle-dot"></i> live metrics</span>{% endif %}
+    </div>
+    <div class="resource-metrics">
+      <div class="metric-box">
+        <div class="metric-pct blue">{{ cpu_pct or '—' }}{% if cpu_pct %}<span style="font-size:16px">%</span>{% endif %}</div>
+        <div class="metric-sub">{% if cpu_used_cores %}{{ cpu_used_cores }} / {{ cpu_total_cores }} cores{% else %}CPU Usage{% endif %}</div>
+        <div class="chart-area"><canvas id="chart-cpu"></canvas></div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-pct purple">{{ mem_pct or '—' }}{% if mem_pct %}<span style="font-size:16px">%</span>{% endif %}</div>
+        <div class="metric-sub">{% if mem_used_gib %}{{ mem_used_gib }} / {{ mem_total_gib }} GiB{% else %}Memory Usage{% endif %}</div>
+        <div class="chart-area"><canvas id="chart-mem"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Pods Status</div></div>
+    <div class="donut-wrap">
+      <div class="donut-canvas-wrap"><canvas id="pods-donut"></canvas>
+        <div class="donut-center"><div class="dc-num">{{ pod_count }}</div><div class="dc-lbl">Total</div></div>
+      </div>
+      <div class="donut-legend">
+        <div class="dl-row"><div class="dl-dot" style="background:var(--green)"></div><span class="dl-label">Running</span><span class="dl-count">{{ pod_running }}</span><span class="dl-pct">{{ ((pod_running/pod_count)*100)|round|int if pod_count else 0 }}%</span></div>
+        <div class="dl-row"><div class="dl-dot" style="background:var(--blue)"></div><span class="dl-label">Pending</span><span class="dl-count">{{ pod_pending }}</span><span class="dl-pct">{{ ((pod_pending/pod_count)*100)|round|int if pod_count else 0 }}%</span></div>
+        <div class="dl-row"><div class="dl-dot" style="background:var(--orange)"></div><span class="dl-label">Failed</span><span class="dl-count">{{ pod_failed }}</span><span class="dl-pct">{{ ((pod_failed/pod_count)*100)|round|int if pod_count else 0 }}%</span></div>
+        <div class="dl-row"><div class="dl-dot" style="background:var(--faint)"></div><span class="dl-label">Unknown</span><span class="dl-count">{{ pod_unknown }}</span><span class="dl-pct">{{ ((pod_unknown/pod_count)*100)|round|int if pod_count else 0 }}%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Nodes</div></div>
+    <div class="nodes-list">
+      {% for n in node_metrics %}
+      <div class="node-row">
+        <div class="node-dot {{ '' if n.ready else 'err' }}"></div>
+        <a href="/nodes/{{ n.name }}" class="node-name" style="color:var(--text);text-decoration:none">{{ n.name }}</a>
+        <span class="node-badge">{{ 'Ready' if n.ready else 'NotReady' }}</span>
+        <span class="node-ver">{{ n.version }}</span>
+        <span class="node-pct">{{ n.cpu_pct }}%</span>
+        <canvas class="node-spark" id="ns-{{ loop.index }}" width="50" height="22"></canvas>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+
+<!-- Bottom: Workloads | Events -->
+<div class="bot-grid">
+
+  <div class="panel">
+    <div class="panel-head"><div class="panel-title">Workloads Overview</div></div>
+    <table class="wl-table">
+      <thead><tr><th>Name</th><th>Type</th><th>Pods</th><th>Status</th><th>Availability</th><th>Age</th></tr></thead>
+      <tbody>
+      {% for w in workloads %}
+      {% set tc = 'dep' if w.type=='Deployment' else 'sts' if w.type=='StatefulSet' else 'ds' if w.type=='DaemonSet' else 'job' if w.type=='Job' else 'cj' %}
+      {% set ti = 'ti-stack-2' if w.type=='Deployment' else 'ti-database' if w.type=='StatefulSet' else 'ti-server' if w.type=='DaemonSet' else 'ti-hammer' if w.type=='Job' else 'ti-clock' %}
+      <tr>
+        <td><div class="wl-name">
+          <div class="wl-icon {{ tc }}"><i class="ti {{ ti }}"></i></div>
+          <div><div style="font-size:12px;font-weight:600">{{ w.name }}</div>
+          <div style="font-size:10px;color:var(--faint)">{{ w.ns }}</div></div>
+        </div></td>
+        <td><span class="wl-type-badge {{ tc }}">{{ w.type }}</span></td>
+        <td><span class="ready"><span class="r">{{ w.ready }}</span><span class="s">/{{ w.desired }}</span></span></td>
+        <td>{% set sc = 'run' if w.status in ('Running','Complete','Active') else 'deg' %}<div class="status-pill {{ sc }}"><div class="sp-dot"></div>{{ w.status }}</div></td>
+        <td><div style="display:flex;align-items:center;gap:8px">
+          <div class="avail-bar"><div class="avail-fill {{ 'warn' if w.avail_pct<50 else '' }}" style="width:{{ w.avail_pct }}%"></div></div>
+          <span style="font-size:11px;color:{{ 'var(--green)' if w.avail_pct==100 else 'var(--orange)' }}">{{ w.avail_pct }}%</span>
+        </div></td>
+        <td style="color:var(--faint);font-size:11px">{{ w.age }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <a class="view-all-link" href="/cluster">View all workloads <i class="ti ti-arrow-right"></i></a>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">Recent Events</div>
+      <a class="view-all" href="/events">View all <i class="ti ti-arrow-right"></i></a>
+    </div>
+    <div class="ev-list-panel">
+      {% for e in events %}{% set iw = e.type=='Warning' %}
+      <div class="ev-item">
+        <div class="ev-icon {{ 'warn' if iw else 'ok' }}"><i class="ti {{ 'ti-alert-triangle' if iw else 'ti-circle-check' }}"></i></div>
+        <div class="ev-body">
+          <div class="ev-row1">
+            <span class="ev-type {{ 'warn' if iw else 'ok' }}">{{ e.type }}</span>
+            <span class="ev-reason">{{ e.reason }}</span>
+          </div>
+          <div class="ev-msg" title="{{ e.message }}">{{ e.message }}</div>
+        </div>
+        <div class="ev-age">{{ age(e.last_timestamp) }} ago</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="cluster-footer">
+  <div class="cf-item"><div class="cf-status"></div>
+    <div><div class="cf-label">Cluster</div><div class="cf-val">{{ cluster_name }}</div></div></div>
+  <div class="cf-item"><i class="ti ti-versions cf-icon"></i>
+    <div><div class="cf-label">Kubernetes Version</div><div class="cf-val">{{ kube_version }}</div></div></div>
+  <div class="cf-item"><i class="ti ti-box cf-icon"></i>
+    <div><div class="cf-label">Container Runtime</div><div class="cf-val">{{ container_runtime }}</div></div></div>
+  <div class="cf-item"><i class="ti ti-plug cf-icon"></i>
+    <div><div class="cf-label">CNI Plugin</div><div class="cf-val">{{ cni_plugin }}</div></div></div>
+  <div style="margin-left:auto;opacity:.06;font-size:80px;position:absolute;right:20px;bottom:-14px;pointer-events:none">
+    <i class="ti ti-settings" style="transform:rotate(15deg);display:inline-block"></i>
+  </div>
+</div>
+</div><!-- /.overview-page -->
+
+<script>
+const CPU_PCT = {{ cpu_pct or 42 }};
+const MEM_PCT = {{ mem_pct or 68 }};
+const NODE_MET = {{ node_metrics | tojson }};
+
+function synth(base, len=20, noise=0.12) {
+  const d=[]; let v=base*0.75;
+  for(let i=0;i<len;i++){v=Math.max(2,Math.min(98,v+(Math.random()-.42)*noise*100));d.push(Math.round(v));}
+  d[d.length-1]=base; return d;
+}
+function timeLabels(n=20){
+  const l=[],now=new Date();
+  for(let i=n-1;i>=0;i--){const t=new Date(now-i*3*60000);l.push(t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0'));}
+  return l;
+}
+function sparkline(id,data,color){
+  const el=document.getElementById(id); if(!el)return;
+  new Chart(el,{type:'line',data:{labels:data.map((_,i)=>i),datasets:[{data,borderColor:color,borderWidth:1.5,pointRadius:0,fill:false,tension:.4}]},
+    options:{responsive:false,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}},events:[]}});
+}
+function areaChart(id,data,color,fill){
+  const el=document.getElementById(id); if(!el)return;
+  new Chart(el,{type:'line',data:{labels:timeLabels(data.length),datasets:[{data,borderColor:color,borderWidth:2,pointRadius:0,fill:true,backgroundColor:fill,tension:.4}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,callbacks:{label:c=>` ${c.raw}%`}}},
+      scales:{x:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#94a3b8',font:{size:9,family:'"Plus Jakarta Sans", sans-serif'},maxTicksLimit:4,maxRotation:0}},
+              y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#94a3b8',font:{size:9,family:'"Plus Jakarta Sans", sans-serif'},callback:v=>v+'%'},min:0,max:100}}}});
+}
+function donut(id,data,colors){
+  const el=document.getElementById(id); if(!el)return;
+  new Chart(el,{type:'doughnut',data:{datasets:[{data,backgroundColor:colors,borderWidth:0,hoverOffset:3}]},
+    options:{cutout:'72%',plugins:{legend:{display:false}},animation:{duration:600}}});
+}
+// ── Time range picker ──────────────────────────────────────────
+(function initTimeRange(){
+  const params = new URLSearchParams(location.search);
+  const tr = params.get('tr'), from = params.get('from'), to = params.get('to');
+  const presets = {'15m':'Last 15 min','30m':'Last 30 min','1h':'Last 1 hour',
+    '3h':'Last 3 hours','6h':'Last 6 hours','12h':'Last 12 hours','24h':'Last 24 hours','7d':'Last 7 days'};
+  if(tr && presets[tr]){
+    document.getElementById('timeRangeLabel').textContent = presets[tr];
+    document.querySelectorAll('.trm-item').forEach(el=>el.classList.remove('trm-active'));
+    const id='preset-'+tr; const el=document.getElementById(id); if(el) el.classList.add('trm-active');
+  } else if(from && to){
+    const fmt=s=>s.replace('T',' ');
+    document.getElementById('timeRangeLabel').textContent = fmt(from.slice(0,16))+' → '+fmt(to.slice(0,16));
+    document.querySelectorAll('.trm-item').forEach(el=>el.classList.remove('trm-active'));
+    document.getElementById('customFrom').value = from.slice(0,16);
+    document.getElementById('customTo').value   = to.slice(0,16);
+  }
+  // default now values for custom inputs
+  const now=new Date(), pad=n=>String(n).padStart(2,'0');
+  const toLocal=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const h1=new Date(now-3600000);
+  if(!document.getElementById('customFrom').value) document.getElementById('customFrom').value=toLocal(h1);
+  if(!document.getElementById('customTo').value)   document.getElementById('customTo').value=toLocal(now);
+})();
+
+function toggleTimeRangeMenu(e){
+  e.stopPropagation();
+  const m=document.getElementById('timeRangeMenu'), btn=document.getElementById('timeRangeBtn');
+  const open=m.classList.toggle('open');
+  btn.classList.toggle('active', open);
+  document.getElementById('timeRangeChevron').style.transform = open ? 'rotate(180deg)' : '';
+}
+document.addEventListener('click', e=>{
+  const m=document.getElementById('timeRangeMenu');
+  if(!m) return;
+  if(!m.contains(e.target) && !document.getElementById('timeRangeBtn').contains(e.target)){
+    m.classList.remove('open');
+    document.getElementById('timeRangeBtn').classList.remove('active');
+    document.getElementById('timeRangeChevron').style.transform='';
+  }
+});
+function selectPreset(val, label){
+  document.querySelectorAll('.trm-item').forEach(el=>el.classList.remove('trm-active'));
+  const el=document.getElementById('preset-'+val); if(el) el.classList.add('trm-active');
+  document.getElementById('timeRangeLabel').textContent=label;
+  document.getElementById('timeRangeMenu').classList.remove('open');
+  document.getElementById('timeRangeBtn').classList.remove('active');
+  document.getElementById('timeRangeChevron').style.transform='';
+  const url=new URL(location.href); url.searchParams.set('tr',val); url.searchParams.delete('from'); url.searchParams.delete('to');
+  location.href=url.toString();
+}
+function applyCustomRange(){
+  const from=document.getElementById('customFrom').value;
+  const to=document.getElementById('customTo').value;
+  if(!from||!to){alert('Please select both From and To.');return;}
+  if(new Date(from)>=new Date(to)){alert('From must be earlier than To.');return;}
+  const url=new URL(location.href); url.searchParams.delete('tr'); url.searchParams.set('from',from); url.searchParams.set('to',to);
+  location.href=url.toString();
+}
+
+window.addEventListener('load',()=>{
+  sparkline('spark-nodes',synth(90,10,.05),'#3b82f6');
+  sparkline('spark-pods', synth(85,10,.08),'#a855f7');
+  sparkline('spark-deps', synth(100,10,.02),'#06b6d4');
+  sparkline('spark-svcs', synth(95,10,.04),'#f59e0b');
+  areaChart('chart-cpu',synth(CPU_PCT,20,.14),'#3b82f6','rgba(59,130,246,.12)');
+  areaChart('chart-mem',synth(MEM_PCT,20,.10),'#a855f7','rgba(168,85,247,.12)');
+  donut('pods-donut',
+    [{{pod_running}}||.01,{{pod_pending}}||.01,{{pod_failed}}||.01,{{pod_unknown}}||.01],
+    ['#10b981','#3b82f6','#f43f5e','#475569']);
+  NODE_MET.forEach((n,i)=>{
+    const base=n.cpu_pct||Math.floor(Math.random()*40+10);
+    sparkline('ns-'+(i+1),synth(base,8,.15),'#10b981');
+  });
+});
+</script>
+{% endblock %}

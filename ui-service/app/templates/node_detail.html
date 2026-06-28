@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-head">
+  <div class="breadcrumb"><a href="/nodes">Nodes</a></div>
+  <h1>{{ node.metadata.name }}</h1>
+  <div class="sub">
+    {{ node_roles(node) }} &nbsp;·&nbsp;
+    {{ node.status.node_info.os_image if node.status.node_info else '' }} &nbsp;·&nbsp;
+    kubelet {{ node.status.node_info.kubelet_version if node.status.node_info else '' }}
+    &nbsp;·&nbsp; age {{ age(node.metadata.creation_timestamp) }}
+    &nbsp;·&nbsp; <span class="dot {{ 'ok' if node_ready(node) else 'err' }}"></span>
+    {{ 'Ready' if node_ready(node) else 'NotReady' }}
+  </div>
+</div>
+
+<!-- Live metrics banner (only if metrics-server available) -->
+{% if live_cpu_m is not none %}
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+            padding:10px 18px;margin-bottom:20px;display:flex;gap:28px;align-items:center">
+  <span style="color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.08em">Live usage</span>
+  <span><span style="color:var(--accent);font-weight:700">{{ fmt_cpu(live_cpu_m) }}</span>
+        <span style="color:var(--faint);font-size:11px"> CPU</span></span>
+  <span><span style="color:var(--accent);font-weight:700">{{ fmt_mem(live_mem_b) }}</span>
+        <span style="color:var(--faint);font-size:11px"> Memory</span></span>
+  <span style="color:var(--faint);font-size:11px;margin-left:auto">
+    <i class="ti ti-circle-dot" style="color:var(--accent)"></i> metrics-server
+  </span>
+</div>
+{% endif %}
+
+<!-- ── Donut charts ─────────────────────────────────────── -->
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+            padding:28px 24px;margin-bottom:20px">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;
+              divide-x:1px solid var(--border)">
+
+    <!-- CPU -->
+    <div style="display:flex;flex-direction:column;align-items:center;padding:0 24px;
+                border-right:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:20px;letter-spacing:.04em">CPU</div>
+      <div style="display:flex;gap:36px;align-items:flex-end">
+        <!-- Requests -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <div class="donut-wrap">
+            <canvas id="cpu-req" width="120" height="120"></canvas>
+            <div class="donut-label">
+              <div class="donut-pct">{{ cpu_req_pct }}%</div>
+              <div class="donut-sub">Requests</div>
+            </div>
+          </div>
+          <div style="color:var(--faint);font-size:11px">Cores: {{ cpu_req_cores }}</div>
+        </div>
+        <!-- Limits -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <div class="donut-wrap">
+            <canvas id="cpu-lim" width="120" height="120"></canvas>
+            <div class="donut-label">
+              <div class="donut-pct warn">{{ cpu_lim_pct }}%</div>
+              <div class="donut-sub">Limits</div>
+            </div>
+          </div>
+          <div style="color:var(--faint);font-size:11px">Cores: {{ cpu_lim_cores }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Memory -->
+    <div style="display:flex;flex-direction:column;align-items:center;padding:0 24px;
+                border-right:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:20px;letter-spacing:.04em">Memory</div>
+      <div style="display:flex;gap:36px;align-items:flex-end">
+        <!-- Requests -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <div class="donut-wrap">
+            <canvas id="mem-req" width="120" height="120"></canvas>
+            <div class="donut-label">
+              <div class="donut-pct">{{ mem_req_pct }}%</div>
+              <div class="donut-sub">Requests</div>
+            </div>
+          </div>
+          <div style="color:var(--faint);font-size:11px">MiB: {{ mem_req_mib }}</div>
+        </div>
+        <!-- Limits -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <div class="donut-wrap">
+            <canvas id="mem-lim" width="120" height="120"></canvas>
+            <div class="donut-label">
+              <div class="donut-pct warn">{{ mem_lim_pct }}%</div>
+              <div class="donut-sub">Limits</div>
+            </div>
+          </div>
+          <div style="color:var(--faint);font-size:11px">MiB: {{ mem_lim_mib }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pods -->
+    <div style="display:flex;flex-direction:column;align-items:center;padding:0 24px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:20px;letter-spacing:.04em">Pods</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        <div class="donut-wrap">
+          <canvas id="pod-alloc" width="120" height="120"></canvas>
+          <div class="donut-label">
+            <div class="donut-pct">{{ pod_alloc_pct }}%</div>
+            <div class="donut-sub">Allocation</div>
+          </div>
+        </div>
+        <div style="color:var(--faint);font-size:11px">Pods: {{ pod_count }}</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Conditions ──────────────────────────────────────── -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">Conditions <span class="cnt">{{ conditions|length }}</span></div>
+</div>
+<div class="table-wrap" style="margin-bottom:20px">
+  <table>
+    <thead><tr>
+      <th>Type</th><th>Status</th>
+      <th>Last probe time</th><th>Last transition time</th>
+      <th>Reason</th><th>Message</th>
+    </tr></thead>
+    <tbody>
+    {% for c in conditions %}
+    {% set ok = (c.type == 'Ready' and c.status == 'True') or
+                (c.type != 'Ready' and c.status == 'False') %}
+    <tr>
+      <td><strong>{{ c.type }}</strong></td>
+      <td>
+        <span class="dot {{ 'ok' if ok else 'warn' }}"></span>
+        {{ c.status }}
+      </td>
+      <td style="color:var(--faint);font-size:12px">
+        {{ age(c.last_probe_time) + ' ago' if c.last_probe_time else '—' }}
+      </td>
+      <td style="color:var(--faint);font-size:12px">
+        {{ age(c.last_transition_time) + ' ago' if c.last_transition_time else '—' }}
+      </td>
+      <td style="font-size:12px;color:var(--muted)">{{ c.reason or '—' }}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:300px">{{ c.message or '—' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Pods on this node ───────────────────────────────── -->
+<div class="section-head" style="margin-bottom:10px">
+  <div class="section-title">
+    Pods <span class="cnt">{{ pod_count }} / {{ pods_max }}</span>
+    {% if not pod_metrics %}
+    <span style="color:var(--faint);font-size:11px;font-weight:400;margin-left:10px">
+      <i class="ti ti-info-circle"></i> Install metrics-server for live CPU/memory usage
+    </span>
+    {% endif %}
+  </div>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Name</th><th>Namespace</th><th>Images</th><th>Labels</th>
+      <th>Status</th><th>Restarts</th>
+      <th>CPU usage</th><th>Memory usage</th><th>Created</th>
+    </tr></thead>
+    <tbody>
+    {% for p in pods %}
+    {% set ph = p.status.phase or 'Unknown' %}
+    {% set key = p.metadata.namespace ~ '/' ~ p.metadata.name %}
+    {% set pm = pod_metrics.get(key) %}
+    <tr>
+      <td>
+        <span class="dot {{ phase_cls(ph) }}"></span>
+        <a class="row-link" href="/pods/{{ p.metadata.namespace }}/{{ p.metadata.name }}">
+          {{ p.metadata.name }}
+        </a>
+      </td>
+      <td style="color:var(--faint);font-size:12px">{{ p.metadata.namespace }}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:180px;overflow:hidden;
+                 text-overflow:ellipsis;white-space:nowrap">
+        {% for c in (p.spec.containers or []) %}
+          <div title="{{ c.image }}">{{ c.image.split('/')[-1] }}</div>
+        {% endfor %}
+      </td>
+      <td>
+        {% if p.metadata.labels %}
+        <div class="tags">
+          {% for k,v in p.metadata.labels.items() | list %}
+          {% if loop.index <= 3 %}
+          <span class="tag">{{ k }}={{ v }}</span>
+          {% endif %}
+          {% endfor %}
+          {% if p.metadata.labels|length > 3 %}
+          <span class="tag">+{{ p.metadata.labels|length - 3 }}</span>
+          {% endif %}
+        </div>
+        {% else %}—{% endif %}
+      </td>
+      <td><span class="badge {{ phase_cls(ph) }}">{{ ph }}</span></td>
+      <td>{{ restarts(p) }}</td>
+      <td style="font-size:12px;color:{{ 'var(--accent)' if pm else 'var(--faint)' }}">
+        {{ fmt_cpu(pm.cpu) if pm else '—' }}
+      </td>
+      <td style="font-size:12px;color:{{ 'var(--accent)' if pm else 'var(--faint)' }}">
+        {{ fmt_mem(pm.mem) if pm else '—' }}
+      </td>
+      <td style="color:var(--faint);font-size:12px">
+        {{ age(p.metadata.creation_timestamp) }} ago
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="empty">
+      <i class="ti ti-circles-relation"></i>No running pods on this node
+    </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Donut chart styles + JS ─────────────────────────── -->
+<style>
+.donut-wrap { position:relative; width:120px; height:120px; }
+.donut-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+               text-align:center; pointer-events:none; }
+.donut-pct { font-size:18px; font-weight:700; color:var(--text); line-height:1.1; }
+.donut-pct.warn { color:var(--warn); }
+.donut-sub { font-size:10px; color:var(--faint); margin-top:2px; }
+</style>
+
+<script>
+function donut(id, pct, color) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [pct, Math.max(0, 100 - pct)],
+        backgroundColor: [color, '#1f2a3d'],
+        borderWidth: 0,
+        hoverOffset: 0,
+      }]
+    },
+    options: {
+      cutout: '74%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      animation: { duration: 700, easing: 'easeInOutQuart' },
+      events: [],
+    }
+  });
+}
+
+donut('cpu-req',  {{ cpu_req_pct }},  '#38d9a9');
+donut('cpu-lim',  {{ cpu_lim_pct }},  '#f5b461');
+donut('mem-req',  {{ mem_req_pct }},  '#38d9a9');
+donut('mem-lim',  {{ mem_lim_pct }},  '#f5b461');
+donut('pod-alloc', {{ pod_alloc_pct }}, '#38d9a9');
+</script>
+{% endblock %}

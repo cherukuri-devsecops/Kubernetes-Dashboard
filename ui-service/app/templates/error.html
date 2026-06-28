@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="empty" style="margin-top:60px">
+  <i class="ti ti-alert-triangle"></i>
+  <div style="color:var(--err);font-size:15px;margin-bottom:8px">API error</div>
+  <div style="color:var(--muted);max-width:500px;margin:0 auto">{{ error }}</div>
+  <div style="margin-top:20px"><a class="btn" href="/">← Back to overview</a></div>
+</div>
+{% endblock %}
