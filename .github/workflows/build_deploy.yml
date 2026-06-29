@@ -153,8 +153,23 @@ jobs:
         run: |
           kubectl rollout status deployment/${{ env.HELM_RELEASE }}-kube-dashboard \
             --namespace ${{ env.NAMESPACE }} \
-            --timeout=120s
+            --timeout=180s
+          kubectl wait pod \
+            --for=condition=Ready \
+            --selector=app.kubernetes.io/instance=${{ env.HELM_RELEASE }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --timeout=60s
 
       - name: Smoke test
         run: |
-          curl -sf http://10.0.0.244/health || exit 1
+          echo "Waiting for ingress to become ready..."
+          for i in $(seq 1 18); do
+            if curl -sf --max-time 5 http://10.0.0.244/health; then
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i/18 failed — retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 3 minutes"
+          exit 1

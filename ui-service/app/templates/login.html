@@ -140,6 +140,7 @@ html,body{height:100%;margin:0}
     </div>
     {% endif %}
 
+    {% if oauth_enabled %}
     <a class="google-btn" href="{{ url_for('auth.auth_google') }}">
       <!-- Google G logo SVG -->
       <svg width="20" height="20" viewBox="0 0 48 48">
@@ -158,6 +159,21 @@ html,body{height:100%;margin:0}
       Access is controlled by your administrator.<br>
       Only approved accounts can sign in.
     </div>
+    {% else %}
+    <form method="post" action="{{ url_for('auth.auth_local') }}">
+      <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+      <button type="submit" class="google-btn" style="background:rgba(37,99,235,0.15);color:var(--text);border:1px solid rgba(37,99,235,0.4);">
+        <i class="ti ti-user" style="font-size:20px;color:#60a5fa"></i>
+        Continue as Local User
+      </button>
+    </form>
+
+    <div style="font-size:12px;color:var(--faint);line-height:1.7;margin-top:20px">
+      <i class="ti ti-info-circle" style="font-size:13px;margin-right:4px"></i>
+      Google OAuth is not configured.<br>
+      Running in local / development mode.
+    </div>
+    {% endif %}
 
     <div class="dots">
       <div class="dot-d on"></div>

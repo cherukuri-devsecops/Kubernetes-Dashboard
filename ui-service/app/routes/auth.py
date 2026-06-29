@@ -20,7 +20,17 @@ def login_page():
         dest = "dashboard.overview" if session.get("cluster_ok") else "setup.setup_page"
         return redirect(url_for(dest))
     error = request.args.get("error")
-    return render_template("login.html", title="Sign in", error=error)
+    return render_template("login.html", title="Sign in", error=error,
+                           oauth_enabled=bool(AUTH_SERVICE_URL))
+
+
+@auth_bp.route("/auth/local", methods=["POST"])
+def auth_local():
+    if AUTH_SERVICE_URL:
+        return redirect(url_for("auth.login_page"))
+    session["user"] = {"email": "local@localhost", "name": "Local User", "picture": ""}
+    audit("login", target="local@localhost")
+    return redirect(url_for("setup.setup_page"))
 
 
 @auth_bp.route("/auth/google")
