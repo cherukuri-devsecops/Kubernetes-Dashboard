@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from datetime import datetime, timezone
 
 import gevent
@@ -35,6 +36,8 @@ from .. import backend_client as _bc
 logger = logging.getLogger(__name__)
 
 dashboard_bp = Blueprint("dashboard", __name__)
+
+_K8S_NAME_RE = re.compile(r'^[a-z0-9]([a-z0-9\-\.]{0,251}[a-z0-9])?$')
 
 _CNI_PATTERNS = [
     ("cilium",       "Cilium"),
@@ -558,6 +561,16 @@ def pod_exec_ws(ws, namespace, name):
 
     container = request.args.get("container") or ""
     shell_cmd = request.args.get("cmd", "/bin/sh")
+
+    if not _K8S_NAME_RE.match(namespace) or not _K8S_NAME_RE.match(name):
+        logger.warning("exec ws: invalid namespace/name %s/%s", namespace, name)
+        ws.close()
+        return
+    if container and not _K8S_NAME_RE.match(container):
+        logger.warning("exec ws: invalid container name %s", container)
+        ws.close()
+        return
+
     audit("pod.exec", target=f"{namespace}/{name}",
           container=container, cmd=shell_cmd)
 
@@ -565,8 +578,9 @@ def pod_exec_ws(ws, namespace, name):
     hdrs = _bc._auth_headers()
 
     ws_url = BACKEND_SERVICE_URL.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
-    backend_url = (f"{ws_url}/api/ws/pods/{namespace}/{name}/exec"
-                   f"?container={container}&cmd={shell_cmd}")
+    query_params = urllib.parse.urlencode({"container": container, "cmd": shell_cmd})
+    backend_url = (f"{ws_url}/api/ws/pods/{urllib.parse.quote(namespace, safe='')}"
+                   f"/{urllib.parse.quote(name, safe='')}/exec?{query_params}")
     header = [f"{k}: {v}" for k, v in hdrs.items()]
 
     try:
