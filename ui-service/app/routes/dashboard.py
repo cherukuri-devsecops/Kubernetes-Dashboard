@@ -11,6 +11,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote, urlencode
 
 import gevent
 import requests as _requests
@@ -565,8 +566,8 @@ def pod_exec_ws(ws, namespace, name):
     hdrs = _bc._auth_headers()
 
     ws_url = BACKEND_SERVICE_URL.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
-    backend_url = (f"{ws_url}/api/ws/pods/{namespace}/{name}/exec"
-                   f"?container={container}&cmd={shell_cmd}")
+    backend_url = (f"{ws_url}/api/ws/pods/{quote(namespace, safe='')}/{quote(name, safe='')}/exec"
+                   f"?{urlencode({'container': container, 'cmd': shell_cmd})}")
     header = [f"{k}: {v}" for k, v in hdrs.items()]
 
     try:
