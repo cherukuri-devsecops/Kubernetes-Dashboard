@@ -6,8 +6,12 @@
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    // Without this, `tsc -b` emits .js/.d.ts next to the config sources.
-    "noEmit": true
+    // `tsc -b` forbids noEmit on a referenced project (TS6310), so emit is
+    // redirected instead of disabled: declarations only, parked under
+    // node_modules so nothing lands next to the config sources.
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/tsconfig-node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig-node.tsbuildinfo"
   },
   "include": ["vite.config.ts", "tailwind.config.ts"]
 }
