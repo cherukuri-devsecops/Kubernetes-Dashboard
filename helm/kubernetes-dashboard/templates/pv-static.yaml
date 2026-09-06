@@ -1,0 +1,67 @@
+{{/*
+The target cluster has no StorageClass, so every StatefulSet PVC would sit
+Pending forever and its pod would never schedule. This statically provisions one
+NFS volume per persistent component, the way the cluster's other apps do
+(NFS, Retain, no class).
+
+Off by default: on a cluster with dynamic provisioning use the StorageClass path
+instead, via each component's persistence.storageClassName.
+
+Each export subdirectory must already exist on the NFS server:
+  <basePath>/postgres, <basePath>/prometheus, <basePath>/loki
+*/}}
+{{- if .Values.nfs.enabled }}
+{{- if not .Values.nfs.server }}
+{{- fail "nfs.enabled is true but nfs.server is empty - set nfs.server to the NFS host" }}
+{{- end }}
+{{- $base := trimSuffix "/" .Values.nfs.basePath }}
+{{- $volumes := list
+  (dict "key" "postgres"
+        "enabled" (and .Values.postgresql.enabled .Values.postgresql.persistence.enabled)
+        "size" .Values.postgresql.persistence.size
+        "sts" (include "kubernetes-dashboard.postgresName" .)
+        "claimPrefix" "postgres-data")
+  (dict "key" "prometheus"
+        "enabled" (and .Values.prometheus.enabled .Values.prometheus.persistence.enabled)
+        "size" .Values.prometheus.persistence.size
+        "sts" (include "kubernetes-dashboard.prometheusName" .)
+        "claimPrefix" "prometheus-data")
+  (dict "key" "loki"
+        "enabled" (and .Values.loki.enabled .Values.loki.persistence.enabled)
+        "size" .Values.loki.persistence.size
+        "sts" (include "kubernetes-dashboard.lokiName" .)
+        "claimPrefix" "loki-data")
+}}
+{{- range $volume := $volumes }}
+{{- if $volume.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $volume.sts }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $volume.key }}
+spec:
+  capacity:
+    storage: {{ $volume.size }}
+  # Must include the mode the claim asks for: the StatefulSet templates request
+  # ReadWriteOnce, and a PV offering only ReadWriteMany does not satisfy that -
+  # the binder matches modes exactly, it does not treat RWX as a superset.
+  accessModes:
+    - ReadWriteOnce
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  # Bound up front to the exact claim the StatefulSet generates, so this volume
+  # cannot be taken by some other pending PVC in the cluster.
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    namespace: {{ include "kubernetes-dashboard.namespace" $ }}
+    name: {{ printf "%s-%s-0" $volume.claimPrefix $volume.sts }}
+  nfs:
+    server: {{ $.Values.nfs.server | quote }}
+    path: {{ printf "%s/%s" $base $volume.key | quote }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -16,7 +16,7 @@ concurrency:
 
 env:
   HELM_RELEASE: kubernetes-dashboard
-  NAMESPACE: kubernetes-dashboard
+  NAMESPACE: observability
   CHART_PATH: ./helm/kubernetes-dashboard
   # frontend/Dockerfile uses a cache mount, which needs BuildKit.
   DOCKER_BUILDKIT: "1"
@@ -83,7 +83,29 @@ jobs:
         run: helm lint "$CHART_PATH"
 
       - name: Helm upgrade
+        # Everything that does not change per run - namespace.create,
+        # externalSecrets, nfs, the LoadBalancer address, ingress - now lives in
+        # values.yaml. Only the image tags and per-environment secrets are set here.
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET }}
+          NFS_SERVER: ${{ secrets.NFS_SERVER }}
+          AUTH_PROVIDER: ${{ vars.AUTH_PROVIDER }}
+          AUTH_API_BASE_URL: ${{ vars.AUTH_API_BASE_URL }}
+          FRONTEND_LB_IP: ${{ vars.FRONTEND_LB_IP }}
         run: |
+          # Override a chart default only when the secret or variable actually
+          # has a value: an unset one would otherwise pass --set-string key=""
+          # and clobber a working default with an empty string.
+          overrides=()
+          add() { if [ -n "$2" ]; then overrides+=(--set-string "$1=$2"); fi; }
+          add secrets.jwtSecret               "$JWT_SECRET"
+          add auth.jwtSecret                  "$AUTH_JWT_SECRET"
+          add auth.provider                   "$AUTH_PROVIDER"
+          add auth.apiBaseUrl                 "$AUTH_API_BASE_URL"
+          add nfs.server                      "$NFS_SERVER"
+          add frontend.service.loadBalancerIP "$FRONTEND_LB_IP"
+
           helm upgrade --install "$HELM_RELEASE" "$CHART_PATH" \
             --namespace "$NAMESPACE" \
             --create-namespace \
@@ -91,12 +113,7 @@ jobs:
             --set-string frontend.image.tag="$IMAGE_TAG" \
             --set-string backend.image.repository="${{ secrets.DOCKERHUB_USERNAME }}/kubernetes-dashboard-backend" \
             --set-string backend.image.tag="$IMAGE_TAG" \
-            --set-string secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
-            --set-string auth.provider="${{ vars.AUTH_PROVIDER || 'demo' }}" \
-            --set-string auth.apiBaseUrl="${{ vars.AUTH_API_BASE_URL }}" \
-            --set-string auth.jwtSecret="${{ secrets.AUTH_JWT_SECRET }}" \
-            --set nfs.enabled=true \
-            --set-string nfs.server="${{ secrets.NFS_SERVER }}" \
+            "${overrides[@]}" \
             --atomic \
             --timeout 10m \
             --history-max 5

@@ -6,6 +6,12 @@ metadata:
   labels:
     {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
+  {{- if and (eq .Values.frontend.service.type "LoadBalancer") .Values.frontend.service.loadBalancerIP }}
+  annotations:
+    # spec.loadBalancerIP has been deprecated since Kubernetes 1.24; MetalLB
+    # takes the address from this annotation instead.
+    metallb.universe.tf/loadBalancerIPs: {{ .Values.frontend.service.loadBalancerIP | quote }}
+  {{- end }}
 spec:
   type: {{ .Values.frontend.service.type }}
   ports:

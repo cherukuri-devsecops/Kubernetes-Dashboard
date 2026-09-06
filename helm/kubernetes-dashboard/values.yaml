@@ -2,14 +2,17 @@ nameOverride: ""
 fullnameOverride: ""
 
 namespace:
-  create: true
+  # False because installs pass --create-namespace: Helm creates the namespace
+  # itself, and a Namespace object in the chart on top of that fails the install
+  # with "namespaces <name> already exists".
+  create: false
 
 # Static NFS volumes, for clusters with no StorageClass (the deploy target has
 # none, which is why dynamically provisioned PVCs sit Pending). The NFS export
 # must already exist: <basePath>/postgres.
 nfs:
-  enabled: false
-  server: ""
+  enabled: true
+  server: "10.0.0.40"
   basePath: /data/nfs/dashboard
 
 config:
@@ -41,7 +44,10 @@ secrets:
   jwtSecret: change-this-stage-1-secret
 
 externalSecrets:
-  enabled: true
+  # Requires the External Secrets Operator CRDs, which the target cluster does
+  # not have; with this on, the install fails on "no matches for kind
+  # ExternalSecret". Turn on once the operator is installed.
+  enabled: false
   refreshInterval: 1h
   secretStore:
     create: true
@@ -100,8 +106,13 @@ frontend:
     tag: stage-1
     pullPolicy: IfNotPresent
   service:
-    type: ClusterIP
+    # The dashboard gets its own address rather than a route on the shared
+    # ingress-nginx controller (10.0.0.240), which also fronts other apps.
+    type: LoadBalancer
     port: 80
+    # Only used when type is LoadBalancer. Must sit inside the MetalLB pool
+    # (default-pool is 10.0.0.240-10.0.0.250).
+    loadBalancerIP: "10.0.0.244"
   resources: {}
 
 backend:
@@ -227,7 +238,10 @@ metricsServer:
   resources: {}
 
 ingress:
-  enabled: true
+  # Off: the frontend Service owns 10.0.0.244 directly. Enabling this puts the
+  # dashboard back on the shared controller at 10.0.0.240, where python-editor's
+  # wildcard rule already claims unmatched hosts.
+  enabled: false
   className: nginx
   host: dashboard.local
   tls:
