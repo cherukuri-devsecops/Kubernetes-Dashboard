@@ -1,0 +1,244 @@
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: true
+
+# Static NFS volumes, for clusters with no StorageClass (the deploy target has
+# none, which is why dynamically provisioned PVCs sit Pending). The NFS export
+# must already exist: <basePath>/postgres.
+nfs:
+  enabled: false
+  server: ""
+  basePath: /data/nfs/dashboard
+
+config:
+  appName: Kubernetes Dashboard
+  environment: kubernetes
+  logLevel: INFO
+  corsOrigins:
+    - https://dashboard.local
+    - http://dashboard.local
+  jwtAlgorithm: HS256
+  accessTokenExpireMinutes: 480
+
+auth:
+  provider: demo
+  apiBaseUrl: ""
+  apiLoginPath: /auth/login
+  apiMePath: /auth/me
+  apiTimeoutSeconds: 5
+  jwtSecret: ""
+  jwtAlgorithm: HS256
+  demoUserEmail: admin@example.com
+  demoUserPassword: admin123
+  demoUserName: Platform Admin
+
+secrets:
+  name: ""
+  databaseUrl: 'postgresql://dashboard:dashboard@{{ include "kubernetes-dashboard.postgresName" . }}:5432/dashboard'
+  redisUrl: 'redis://{{ include "kubernetes-dashboard.redisName" . }}:6379/0'
+  jwtSecret: change-this-stage-1-secret
+
+externalSecrets:
+  enabled: true
+  refreshInterval: 1h
+  secretStore:
+    create: true
+    name: stage-1-secret-store
+    kind: SecretStore
+    spec:
+      provider:
+        fake:
+          data:
+            - key: POSTGRES_DB
+              value: dashboard
+            - key: POSTGRES_USER
+              value: dashboard
+            - key: POSTGRES_PASSWORD
+              value: dashboard
+            - key: DATABASE_URL
+              value: 'postgresql://dashboard:dashboard@{{ include "kubernetes-dashboard.postgresName" . }}:5432/dashboard'
+            - key: REDIS_URL
+              value: 'redis://{{ include "kubernetes-dashboard.redisName" . }}:6379/0'
+            - key: JWT_SECRET
+              value: change-this-stage-1-secret
+            - key: AUTH_JWT_SECRET
+              value: ""
+            - key: DEMO_USER_EMAIL
+              value: admin@example.com
+            - key: DEMO_USER_PASSWORD
+              value: admin123
+            - key: DEMO_USER_NAME
+              value: Platform Admin
+  data:
+    POSTGRES_DB:
+      remoteKey: POSTGRES_DB
+    POSTGRES_USER:
+      remoteKey: POSTGRES_USER
+    POSTGRES_PASSWORD:
+      remoteKey: POSTGRES_PASSWORD
+    DATABASE_URL:
+      remoteKey: DATABASE_URL
+    REDIS_URL:
+      remoteKey: REDIS_URL
+    JWT_SECRET:
+      remoteKey: JWT_SECRET
+    AUTH_JWT_SECRET:
+      remoteKey: AUTH_JWT_SECRET
+    DEMO_USER_EMAIL:
+      remoteKey: DEMO_USER_EMAIL
+    DEMO_USER_PASSWORD:
+      remoteKey: DEMO_USER_PASSWORD
+    DEMO_USER_NAME:
+      remoteKey: DEMO_USER_NAME
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: kubernetes-dashboard-frontend
+    tag: stage-1
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+backend:
+  replicaCount: 1
+  image:
+    repository: kubernetes-dashboard-backend
+    tag: stage-1
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources: {}
+
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  auth:
+    database: dashboard
+    username: dashboard
+    password: dashboard
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+  resources: {}
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  resources: {}
+
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: v2.55.1
+    pullPolicy: IfNotPresent
+  retention: 15d
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources: {}
+
+kubeStateMetrics:
+  enabled: true
+  image:
+    repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+    tag: v2.13.0
+    pullPolicy: IfNotPresent
+  resources: {}
+
+nodeExporter:
+  enabled: true
+  image:
+    repository: prom/node-exporter
+    tag: v1.8.2
+    pullPolicy: IfNotPresent
+  resources: {}
+
+loki:
+  enabled: true
+  image:
+    repository: grafana/loki
+    tag: "2.9.10"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources: {}
+
+fluentBit:
+  enabled: true
+  image:
+    repository: fluent/fluent-bit
+    tag: 3.1.9
+    pullPolicy: IfNotPresent
+  resources: {}
+
+tempo:
+  enabled: true
+  image:
+    repository: grafana/tempo
+    tag: "2.6.1"
+    pullPolicy: IfNotPresent
+  retention: 24h
+  persistence:
+    # Off by default: with no StorageClass on the cluster this PVC would sit
+    # Pending and block the pod. Traces fall back to the pod's emptyDir.
+    enabled: false
+    size: 10Gi
+    storageClassName: ""
+  resources: {}
+
+otelCollector:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.116.1"
+    pullPolicy: IfNotPresent
+  resources: {}
+
+# Cluster-wide singleton - the v1beta1.metrics.k8s.io APIService can only point at
+# one Service, and most distributions already ship Metrics Server. Enable only if
+# `kubectl top nodes` reports the Metrics API as unavailable.
+metricsServer:
+  enabled: false
+  image:
+    repository: registry.k8s.io/metrics-server/metrics-server
+    tag: v0.7.2
+    pullPolicy: IfNotPresent
+  metricResolution: 15s
+  # Kubelets in kubeadm and most local clusters serve self-signed certificates.
+  kubeletInsecureTLS: true
+  resources: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: dashboard.local
+  tls:
+    enabled: true
+    secretName: dashboard-local-tls
+  annotations:
+    cert-manager.io/issuer: stage-1-selfsigned
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+
+certManager:
+  issuer:
+    create: true
+    name: stage-1-selfsigned
+    selfSigned: true

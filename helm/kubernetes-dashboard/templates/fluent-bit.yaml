@@ -1,0 +1,148 @@
+{{- if .Values.fluentBit.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fluent-bit
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fluent-bit
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+    namespace: {{ include "kubernetes-dashboard.namespace" . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}-config
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fluent-bit
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*.log
+        Parser            cri
+        Tag               kube.*
+        Refresh_Interval  5
+        Mem_Buf_Limit     20MB
+        Skip_Long_Lines   On
+        DB                /var/lib/fluent-bit-db/flb.db
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Merge_Log           On
+        Keep_Log            Off
+        K8S-Logging.Parser  On
+
+    [OUTPUT]
+        Name          loki
+        Match         kube.*
+        Host          {{ include "kubernetes-dashboard.lokiName" . }}
+        Port          3100
+        Labels        job=fluent-bit
+        Label_Keys    $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name']
+        Line_Format   json
+        Remove_Keys   time,kubernetes
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kubernetes-dashboard.fluentBitName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      {{- include "kubernetes-dashboard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: fluent-bit
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-dashboard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: fluent-bit
+    spec:
+      serviceAccountName: {{ include "kubernetes-dashboard.fluentBitName" . }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          image: "{{ .Values.fluentBit.image.repository }}:{{ .Values.fluentBit.image.tag }}"
+          imagePullPolicy: {{ .Values.fluentBit.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.fluentBit.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+            - name: config
+              mountPath: /fluent-bit/etc/parsers.conf
+              subPath: parsers.conf
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: positiondb
+              mountPath: /var/lib/fluent-bit-db
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kubernetes-dashboard.fluentBitName" . }}-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: positiondb
+          hostPath:
+            path: /var/lib/fluent-bit-db
+            type: DirectoryOrCreate
+{{- end }}

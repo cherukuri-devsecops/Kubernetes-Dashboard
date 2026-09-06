@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: federate-in-cluster
+    honor_labels: true
+    metrics_path: /federate
+    params:
+      "match[]":
+        - '{__name__=~".+"}'
+    static_configs:
+      # host.docker.internal:9090 is the kubectl port-forward to the in-cluster
+      # Prometheus (svc/kubernetes-dashboard-prometheus) - keep that port-forward
+      # running for this to have data.
+      - targets: ["host.docker.internal:9090"]

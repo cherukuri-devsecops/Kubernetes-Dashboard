@@ -1,0 +1,80 @@
+{{- if .Values.nodeExporter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernetes-dashboard.nodeExporterName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+  selector:
+    {{- include "kubernetes-dashboard.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kubernetes-dashboard.nodeExporterName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  selector:
+    matchLabels:
+      {{- include "kubernetes-dashboard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-dashboard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: node-exporter
+          image: "{{ .Values.nodeExporter.image.repository }}:{{ .Values.nodeExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.nodeExporter.image.pullPolicy }}
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+|host/.+)($|/)
+          ports:
+            - name: metrics
+              containerPort: 9100
+              hostPort: 9100
+          resources:
+            {{- toYaml .Values.nodeExporter.resources | nindent 12 }}
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+              mountPropagation: HostToContainer
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+{{- end }}

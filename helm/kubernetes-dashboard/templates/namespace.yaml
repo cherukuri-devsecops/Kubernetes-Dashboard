@@ -1,0 +1,8 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+{{- end }}

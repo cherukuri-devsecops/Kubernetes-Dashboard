@@ -1,203 +1,183 @@
 services:
-
-  # ── UI Service (Flask) ──────────────────────────────────────────────────────
-  ui-service:
-    build:
-      context: ./ui-service
-      dockerfile: ./Dockerfile
-    image: cherukuri1991/kube-dashboard-ui:latest
-    container_name: kube-dashboard-ui
-    ports:
-      - "5002:5000"
-    user: "0:0"
+  postgres:
+    image: postgres:16-alpine
+    container_name: kube-dashboard-postgres
     environment:
-      - PYTHONDONTWRITEBYTECODE=1
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-change-me}
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
-      - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI:-http://localhost:5002/auth/callback}
-      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-0}
-      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-0}
-      - ALLOWED_EMAILS=${ALLOWED_EMAILS:-}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - LOKI_URL=${LOKI_URL:-http://loki:3100}
-      - SQLITE_PATH=${SQLITE_PATH:-/data/dashboard.db}
-      - CLUSTER_SCOPE=${CLUSTER_SCOPE:-local}
-      - DB_POLLER_ENABLED=${DB_POLLER_ENABLED:-1}
-      - EVENT_POLL_INTERVAL=${EVENT_POLL_INTERVAL:-30}
-      - METRIC_POLL_INTERVAL=${METRIC_POLL_INTERVAL:-60}
-      - BACKEND_SERVICE_URL=http://backend-service:8000
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
-      - OTEL_SERVICE_NAME=kube-dashboard-ui
-    volumes:
-      - ./sqlite_data:/data
-    restart: unless-stopped
-    depends_on:
-      loki:
-        condition: service_healthy
-      backend-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - kube-net
-
-  # ── Backend API (FastAPI) ───────────────────────────────────────────────────
-  backend-service:
-    build:
-      context: ./backend-service
-      dockerfile: ./Dockerfile
-    image: cherukuri1991/kube-dashboard-backend:latest
-    container_name: kube-dashboard-backend
+      POSTGRES_DB: dashboard
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
     ports:
-      - "8001:8000"
-    user: "0:0"
-    environment:
-      - PYTHONDONTWRITEBYTECODE=1
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - LOKI_URL=${LOKI_URL:-http://loki:3100}
-      - PROMETHEUS_URL=http://prometheus:9090
-      - UI_ORIGIN=http://localhost:5002
-      - SQLITE_PATH=${SQLITE_PATH:-/data/dashboard.db}
-      - JAEGER_URL=${JAEGER_URL:-}
-      - TEMPO_URL=${TEMPO_URL:-}
-      - CLUSTER_SCOPE=${CLUSTER_SCOPE:-local}
-      - TEMPO_URL=http://tempo:3200
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
-      - OTEL_SERVICE_NAME=kube-dashboard-backend
+      - "5432:5432"
     volumes:
-      - ./sqlite_data:/data
-      - ~/.kube/config:/root/.kube/config:ro
-    restart: unless-stopped
-    depends_on:
-      loki:
-        condition: service_healthy
-      prometheus:
-        condition: service_started
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - kube-net
-
-  # ── Loki (log store) ────────────────────────────────────────────────────────
-  loki:
-    image: grafana/loki:3.3.2
-    container_name: kube-dashboard-loki
-    restart: unless-stopped
-    ports:
-      - "3100:3100"
-    user: "0:0"
-    command: -config.file=/etc/loki/config.yaml -config.expand-env=true
-    environment:
-      - LOKI_S3_ENDPOINT=${LOKI_S3_ENDPOINT}
-      - LOKI_S3_BUCKET=${LOKI_S3_BUCKET}
-      - LOKI_S3_REGION=${LOKI_S3_REGION:-us-east-1}
-      - LOKI_S3_ACCESS_KEY_ID=${LOKI_S3_ACCESS_KEY_ID}
-      - LOKI_S3_SECRET_ACCESS_KEY=${LOKI_S3_SECRET_ACCESS_KEY}
-    volumes:
-      - ./loki-config.yaml:/etc/loki/config.yaml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d dashboard"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 20s
-    networks:
-      - kube-net
+      retries: 5
 
-  # ── Prometheus (metrics store) ──────────────────────────────────────────────
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    container_name: kube-dashboard-prometheus
-    restart: unless-stopped
-    user: "0:0"
+  redis:
+    image: redis:7-alpine
+    container_name: kube-dashboard-redis
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "9090:9090"
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=15d"
-      - "--web.enable-lifecycle"
+      - "6379:6379"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus_data:/prometheus
-    networks:
-      - kube-net
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # ── Tempo (trace store) ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kube-dashboard-prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: kube-dashboard-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    user: "0"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   tempo:
-    image: grafana/tempo:2.4.1
+    image: grafana/tempo:2.7.1
     container_name: kube-dashboard-tempo
     restart: unless-stopped
-    command: -config.file=/etc/tempo/config.yaml
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    # Named volumes are root-owned; Tempo's default uid cannot write them.
+    user: "0"
+    volumes:
+      - ./monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
     ports:
       - "3200:3200"
-      - "4317:4317"
-    volumes:
-      - ./tempo-config.yaml:/etc/tempo/config.yaml:ro
-    networks:
-      - kube-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
-  # ── Fluent Bit (log collector → Loki) ──────────────────────────────────────
-  # Requires Linux host paths — enable with: docker compose --profile linux up
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: kube-dashboard-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/otel-collector.yml"]
+    volumes:
+      - ./monitoring/otel-collector/otel-collector.yml:/etc/otel/otel-collector.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      tempo:
+        condition: service_healthy
+
   fluent-bit:
-    profiles: [linux]
-    image: fluent/fluent-bit:3.0
+    image: fluent/fluent-bit:3.2.5
     container_name: kube-dashboard-fluent-bit
     restart: unless-stopped
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
     volumes:
-      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./monitoring/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./monitoring/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - dashboard_logs:/var/log/dashboard
     depends_on:
       loki:
         condition: service_healthy
-    networks:
-      - kube-net
 
-  # ── Node Exporter (host metrics → Prometheus) ───────────────────────────────
-  # Requires Linux host paths — enable with: docker compose --profile linux up
-  node-exporter:
-    profiles: [linux]
-    image: prom/node-exporter:v1.8.0
-    container_name: kube-dashboard-node-exporter
-    restart: unless-stopped
-    pid: host
+  backend:
+    build:
+      context: ./backend
+    container_name: kube-dashboard-backend
+    environment:
+      APP_NAME: Kubernetes Dashboard
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      DATABASE_URL: postgresql://dashboard:dashboard@postgres:5432/dashboard
+      REDIS_URL: redis://redis:6379/0
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      LOKI_URL: ${LOKI_URL:-http://loki:3100}
+      TEMPO_URL: ${TEMPO_URL:-http://tempo:3200}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      OTEL_SERVICE_NAME: kubernetes-dashboard-backend
+      LOG_FILE: /var/log/dashboard/backend.log
+      JWT_SECRET: change-this-stage-1-secret
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 480
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-demo}
+      AUTH_API_BASE_URL: ${AUTH_API_BASE_URL:-}
+      AUTH_API_LOGIN_PATH: ${AUTH_API_LOGIN_PATH:-/auth/login}
+      AUTH_API_ME_PATH: ${AUTH_API_ME_PATH:-/auth/me}
+      AUTH_API_TIMEOUT_SECONDS: ${AUTH_API_TIMEOUT_SECONDS:-5}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      AUTH_JWT_ALGORITHM: ${AUTH_JWT_ALGORITHM:-HS256}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      DEMO_USER_EMAIL: admin@example.com
+      DEMO_USER_PASSWORD: admin123
+      DEMO_USER_NAME: Platform Admin
+      KUBECONFIG: /root/.kube/config
+    ports:
+      - "8000:8000"
     volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    networks:
-      - kube-net
+      - ${KUBECONFIG_HOST_PATH:-~/.kube}:/root/.kube:ro
+      - dashboard_logs:/var/log/dashboard
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
 
-  # ── cAdvisor (container metrics → Prometheus) ──────────────────────────────
-  # Requires Linux host paths — enable with: docker compose --profile linux up
-  cadvisor:
-    profiles: [linux]
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
-    container_name: kube-dashboard-cadvisor
-    restart: unless-stopped
-    privileged: true
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    networks:
-      - kube-net
+  frontend:
+    build:
+      context: ./frontend
+    container_name: kube-dashboard-frontend
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - backend
 
-networks:
-  kube-net:
-    driver: bridge
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  dashboard_logs:

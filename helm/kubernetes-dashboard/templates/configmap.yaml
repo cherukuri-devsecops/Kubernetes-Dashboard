@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubernetes-dashboard.fullname" . }}-config
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+data:
+  APP_NAME: {{ .Values.config.appName | quote }}
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  CORS_ORIGINS: {{ join "," .Values.config.corsOrigins | quote }}
+  JWT_ALGORITHM: {{ .Values.config.jwtAlgorithm | quote }}
+  ACCESS_TOKEN_EXPIRE_MINUTES: {{ .Values.config.accessTokenExpireMinutes | quote }}
+  AUTH_PROVIDER: {{ .Values.auth.provider | quote }}
+  AUTH_API_BASE_URL: {{ .Values.auth.apiBaseUrl | quote }}
+  AUTH_API_LOGIN_PATH: {{ .Values.auth.apiLoginPath | quote }}
+  AUTH_API_ME_PATH: {{ .Values.auth.apiMePath | quote }}
+  AUTH_API_TIMEOUT_SECONDS: {{ .Values.auth.apiTimeoutSeconds | quote }}
+  AUTH_JWT_ALGORITHM: {{ .Values.auth.jwtAlgorithm | quote }}
+  PROMETHEUS_URL: 'http://{{ include "kubernetes-dashboard.prometheusName" . }}:9090'
+  LOKI_URL: 'http://{{ include "kubernetes-dashboard.lokiName" . }}:3100'
+  TEMPO_URL: 'http://{{ include "kubernetes-dashboard.tempoName" . }}:3200'
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ include "kubernetes-dashboard.otlpEndpoint" . | quote }}
+  OTEL_SERVICE_NAME: {{ include "kubernetes-dashboard.backendName" . | quote }}

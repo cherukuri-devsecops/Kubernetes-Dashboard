@@ -1,0 +1,21 @@
+Kubernetes Dashboard Stage 1 has been installed.
+
+Namespace:
+  {{ .Release.Namespace }}
+
+Frontend service:
+  {{ include "kubernetes-dashboard.frontendName" . }}:{{ .Values.frontend.service.port }}
+
+Backend service:
+  {{ include "kubernetes-dashboard.backendName" . }}:{{ .Values.backend.service.port }}
+
+{{- if .Values.ingress.enabled }}
+Ingress:
+  {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+Port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kubernetes-dashboard.frontendName" . }} 8080:{{ .Values.frontend.service.port }}
+{{- end }}
+
+Default development login:
+  {{ .Values.auth.demoUserEmail }}

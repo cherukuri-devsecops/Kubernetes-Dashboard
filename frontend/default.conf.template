@@ -1,0 +1,29 @@
+# Rendered by the nginx image's envsubst entrypoint into
+# /etc/nginx/conf.d/default.conf at container start.
+#
+# BACKEND_ORIGIN has to be a variable: the backend's address differs per
+# environment (the compose service is "backend", the Kubernetes Service is
+# "<release>-backend"), and nginx resolves proxy_pass names at startup, so a
+# wrong name here does not degrade the API proxy - it stops nginx from booting
+# and takes the whole SPA down with it.
+
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location /api/ {
+    proxy_pass ${BACKEND_ORIGIN}/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}

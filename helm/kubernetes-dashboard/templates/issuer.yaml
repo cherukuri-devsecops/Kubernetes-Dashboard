@@ -1,0 +1,13 @@
+{{- if .Values.certManager.issuer.create }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.certManager.issuer.name }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.certManager.issuer.selfSigned }}
+  selfSigned: {}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,36 @@
+# Tempo stores the traces the OTel Collector forwards. The collector owns the
+# published OTLP ports; Tempo's receiver is reachable only inside the compose
+# network, which keeps one ingestion path rather than two.
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # Short blocks so a trace is queryable seconds after it is emitted, which is
+  # what you want when you are watching a request you just made.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+usage_report:
+  reporting_enabled: false

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    // Without this, `tsc -b` emits .js/.d.ts next to the config sources.
+    "noEmit": true
+  },
+  "include": ["vite.config.ts", "tailwind.config.ts"]
+}

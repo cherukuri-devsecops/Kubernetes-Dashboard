@@ -1,0 +1,205 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    verbs: ["get"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubernetes-dashboard.prometheusName" . }}
+    namespace: {{ include "kubernetes-dashboard.namespace" . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}-config
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: backend
+        static_configs:
+          - targets: ["{{ include "kubernetes-dashboard.backendName" . }}:{{ .Values.backend.service.port }}"]
+
+      - job_name: kubelet-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      - job_name: node-exporter
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace]
+            action: keep
+            regex: {{ include "kubernetes-dashboard.namespace" . }}
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: {{ include "kubernetes-dashboard.nodeExporterName" . }}
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+
+      - job_name: kube-state-metrics
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace]
+            action: keep
+            regex: {{ include "kubernetes-dashboard.namespace" . }}
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: http-metrics
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+  selector:
+    {{- include "kubernetes-dashboard.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kubernetes-dashboard.prometheusName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  serviceName: {{ include "kubernetes-dashboard.prometheusName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubernetes-dashboard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-dashboard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      serviceAccountName: {{ include "kubernetes-dashboard.prometheusName" . }}
+      containers:
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.prometheus.image.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: prometheus-data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kubernetes-dashboard.prometheusName" . }}-config
+        {{- if not .Values.prometheus.persistence.enabled }}
+        - name: prometheus-data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.prometheus.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: prometheus-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.prometheus.persistence.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.prometheus.persistence.size }}
+  {{- end }}
+{{- end }}

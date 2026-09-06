@@ -3,102 +3,59 @@ name: Build and Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# Deploys touch one cluster, so let a run finish rather than interleaving Helm
+# upgrades. Queued rather than cancelled: a half-applied release is worse.
+concurrency:
+  group: build-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
-  UI_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/kube-dashboard-ui
-  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/kube-dashboard-backend
-  NAMESPACE: kube-dashboard
-  HELM_RELEASE: kube-dash
+  HELM_RELEASE: kubernetes-dashboard
+  NAMESPACE: kubernetes-dashboard
+  CHART_PATH: ./helm/kubernetes-dashboard
+  # frontend/Dockerfile uses a cache mount, which needs BuildKit.
+  DOCKER_BUILDKIT: "1"
 
 jobs:
-  # ── Build UI image ───────────────────────────────────────────────────────────
-  build-ui:
+  build:
     runs-on: arc-runner-set
-    outputs:
-      image_tag: ${{ steps.meta.outputs.image_tag }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: frontend
+            image: kubernetes-dashboard-frontend
+          - component: backend
+            image: kubernetes-dashboard-backend
 
     steps:
       - uses: actions/checkout@v4
 
-      - id: meta
-        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Resolve image tag
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
-      - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+      - name: Log in to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
+            | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Build UI image
+      - name: Build ${{ matrix.component }} image
         run: |
           docker build \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            -f ui-service/Dockerfile \
-            -t $UI_IMAGE:${{ steps.meta.outputs.image_tag }} \
-            ui-service/
+            --build-arg VITE_API_BASE_URL="${{ vars.VITE_API_BASE_URL }}" \
+            -t "${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${IMAGE_TAG}" \
+            "./${{ matrix.component }}"
 
-      - name: Push UI image
-        run: docker push $UI_IMAGE:${{ steps.meta.outputs.image_tag }}
+      - name: Push ${{ matrix.component }} image
+        run: docker push "${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${IMAGE_TAG}"
 
-  # ── Build backend image ──────────────────────────────────────────────────────
-  build-backend:
-    runs-on: arc-runner-set
-    outputs:
-      image_tag: ${{ steps.meta.outputs.image_tag }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: meta
-        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
-      - name: Login to Docker Hub
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-      - name: Build backend image
-        run: |
-          docker build \
-            --build-arg GIT_SHA=${{ github.sha }} \
-            -f backend-service/Dockerfile \
-            -t $BACKEND_IMAGE:${{ steps.meta.outputs.image_tag }} \
-            backend-service/
-
-      - name: Push backend image
-        run: docker push $BACKEND_IMAGE:${{ steps.meta.outputs.image_tag }}
-
-  # ── Security scan ────────────────────────────────────────────────────────────
-  # security-scan:
-  #   needs: [build-ui, build-backend]
-  #   runs-on: arc-runner-set
-  #   permissions:
-  #     security-events: write
-  #   strategy:
-  #     matrix:
-  #       image: [ui, backend]
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Run Trivy vulnerability scan
-  #       uses: aquasecurity/trivy-action@0.29.0
-  #       with:
-  #         image-ref: >-
-  #           ${{ matrix.image == 'ui'
-  #             && format('{0}:{1}', env.UI_IMAGE, needs.build-ui.outputs.image_tag)
-  #             || format('{0}:{1}', env.BACKEND_IMAGE, needs.build-backend.outputs.image_tag) }}
-  #         format: sarif
-  #         output: trivy-results.sarif
-  #         severity: CRITICAL,HIGH
-  #         ignore-unfixed: true
-  #
-  #     - name: Upload results to GitHub Security tab
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       if: always()
-  #       with:
-  #         sarif_file: trivy-results.sarif
-
-  # ── Deploy ───────────────────────────────────────────────────────────────────
   deploy:
-    needs: [build-ui, build-backend]
+    needs: [build]
     runs-on: arc-runner-set
     environment: production
 
@@ -111,65 +68,64 @@ jobs:
       - name: Setup Helm
         uses: azure/setup-helm@v4
 
-      - name: Setup kubeconfig
-        run: |
-          echo "${{ secrets.KUBE_CONFIG }}" > kubeconfig
-          echo "KUBECONFIG=$PWD/kubeconfig" >> "$GITHUB_ENV"
+      - name: Resolve image tag
+        # Recomputed rather than passed between jobs: a matrix job cannot emit a
+        # single shared output, and the short SHA is deterministic anyway.
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
-      - name: Release stuck NFS PersistentVolumes
+      - name: Write kubeconfig
         run: |
-          for PV in ${{ env.HELM_RELEASE }}-kube-dashboard-sqlite ${{ env.HELM_RELEASE }}-kube-dashboard-prometheus; do
-            PHASE=$(kubectl get pv "$PV" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            if [ "$PHASE" = "Released" ]; then
-              echo "Clearing claimRef on Released PV $PV"
-              kubectl patch pv "$PV" -p '{"spec":{"claimRef":null}}'
-            fi
-          done
+          umask 077
+          printf '%s' "${{ secrets.KUBE_CONFIG }}" > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Lint chart
+        run: helm lint "$CHART_PATH"
 
       - name: Helm upgrade
         run: |
-          helm upgrade --install ${{ env.HELM_RELEASE }} ./helm/kube-dashboard \
-            --namespace ${{ env.NAMESPACE }} \
+          helm upgrade --install "$HELM_RELEASE" "$CHART_PATH" \
+            --namespace "$NAMESPACE" \
             --create-namespace \
-            --set uiService.image.repository=${{ env.UI_IMAGE }} \
-            --set uiService.image.tag=${{ needs.build-ui.outputs.image_tag }} \
-            --set backendService.image.repository=${{ env.BACKEND_IMAGE }} \
-            --set backendService.image.tag=${{ needs.build-backend.outputs.image_tag }} \
-            --set global.imagePullPolicy=Always \
-            --set nfs.server=${{ secrets.NFS_SERVER }} \
-            --set secrets.secretKey=${{ secrets.SECRET_KEY }} \
-            --set secrets.authJwtSecret=${{ secrets.AUTH_JWT_SECRET }} \
-            --set secrets.authServiceUrl=${{ secrets.AUTH_SERVICE_URL }} \
-            --set secrets.oauthRedirectUri=http://10.0.0.244/auth/callback \
-            --set ingress.enabled=true \
-            --set ingress.bundledController.enabled=true \
-            --set ingress.bundledController.service.loadBalancerIP=10.0.0.244 \
-            --rollback-on-failure \
-            --timeout 8m \
-            --wait \
+            --set-string frontend.image.repository="${{ secrets.DOCKERHUB_USERNAME }}/kubernetes-dashboard-frontend" \
+            --set-string frontend.image.tag="$IMAGE_TAG" \
+            --set-string backend.image.repository="${{ secrets.DOCKERHUB_USERNAME }}/kubernetes-dashboard-backend" \
+            --set-string backend.image.tag="$IMAGE_TAG" \
+            --set-string secrets.jwtSecret="${{ secrets.JWT_SECRET }}" \
+            --set-string auth.provider="${{ vars.AUTH_PROVIDER || 'demo' }}" \
+            --set-string auth.apiBaseUrl="${{ vars.AUTH_API_BASE_URL }}" \
+            --set-string auth.jwtSecret="${{ secrets.AUTH_JWT_SECRET }}" \
+            --set nfs.enabled=true \
+            --set-string nfs.server="${{ secrets.NFS_SERVER }}" \
+            --atomic \
+            --timeout 10m \
             --history-max 5
 
       - name: Verify rollout
         run: |
-          kubectl rollout status deployment/${{ env.HELM_RELEASE }}-kube-dashboard \
-            --namespace ${{ env.NAMESPACE }} \
-            --timeout=180s
-          kubectl wait pod \
-            --for=condition=Ready \
-            --selector=app.kubernetes.io/instance=${{ env.HELM_RELEASE }} \
-            --namespace ${{ env.NAMESPACE }} \
-            --timeout=60s
+          for deployment in backend frontend; do
+            kubectl rollout status "deployment/${HELM_RELEASE}-${deployment}" \
+              --namespace "$NAMESPACE" \
+              --timeout=180s
+          done
 
       - name: Smoke test
+        # ARC runners are pods in this cluster, so the Service DNS is reachable
+        # directly - no ingress, LoadBalancer IP, or port-forward needed.
         run: |
-          echo "Waiting for ingress to become ready..."
-          for i in $(seq 1 18); do
-            if curl -sf --max-time 5 http://10.0.0.244/health; then
-              echo "Health check passed on attempt $i"
+          endpoint="http://${HELM_RELEASE}-backend.${NAMESPACE}.svc.cluster.local:8000/health"
+          for attempt in $(seq 1 12); do
+            if curl -sf --max-time 5 "$endpoint"; then
+              echo "Health check passed on attempt $attempt"
               exit 0
             fi
-            echo "Attempt $i/18 failed — retrying in 10s..."
+            echo "Attempt $attempt/12 failed - retrying in 10s..."
             sleep 10
           done
-          echo "Health check failed after 3 minutes"
+          echo "Health check failed after 2 minutes"
+          kubectl get pods --namespace "$NAMESPACE"
           exit 1
+
+      - name: Remove kubeconfig
+        if: always()
+        run: rm -f "$RUNNER_TEMP/kubeconfig"

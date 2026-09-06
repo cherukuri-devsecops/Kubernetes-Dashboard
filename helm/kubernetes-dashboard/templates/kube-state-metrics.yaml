@@ -1,0 +1,126 @@
+{{- if .Values.kubeStateMetrics.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - pods
+      - services
+      - namespaces
+      - endpoints
+      - persistentvolumeclaims
+      - persistentvolumes
+      - resourcequotas
+      - replicationcontrollers
+      - limitranges
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+    namespace: {{ include "kubernetes-dashboard.namespace" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+spec:
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: http-metrics
+  selector:
+    {{- include "kubernetes-dashboard.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+  namespace: {{ include "kubernetes-dashboard.namespace" . }}
+  labels:
+    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kube-state-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubernetes-dashboard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        {{- include "kubernetes-dashboard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kube-state-metrics
+    spec:
+      serviceAccountName: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
+      containers:
+        - name: kube-state-metrics
+          image: "{{ .Values.kubeStateMetrics.image.repository }}:{{ .Values.kubeStateMetrics.image.tag }}"
+          imagePullPolicy: {{ .Values.kubeStateMetrics.image.pullPolicy }}
+          ports:
+            - name: http-metrics
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http-metrics
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.kubeStateMetrics.resources | nindent 12 }}
+{{- end }}
