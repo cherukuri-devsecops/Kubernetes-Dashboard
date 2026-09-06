@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Bell, CheckCheck, Info, TriangleAlert, CircleCheck, CircleX } from "lucide-react";
 import clsx from "clsx";
 
-import { formatRelativeTime, generateNotifications, type NotificationItem } from "@/utils/mockData";
+import { fetchNotifications, type NotificationItem } from "@/services/notifications";
+import { formatRelativeTime } from "@/utils/format";
 
 const KIND_ICON = {
   info: Info,
@@ -18,12 +20,56 @@ const KIND_COLOR = {
   error: "text-signal-red",
 } as const;
 
+const REFRESH_INTERVAL_MS = 30000;
+const READ_STORAGE_KEY = "dashboard.notifications.read";
+
+/** Read state is per-browser: the cluster has no concept of an acknowledged
+ * event, so dismissing one here must not pretend to change anything upstream. */
+function loadReadIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(READ_STORAGE_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistReadIds(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(READ_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // A browser blocking storage just means read state resets on reload.
+  }
+}
+
 export function NotificationCenter() {
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => generateNotifications());
+  const navigate = useNavigate();
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = notifications.filter((notification) => !readIds.has(notification.id)).length;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const items = await fetchNotifications();
+        if (!cancelled) setNotifications(items);
+      } catch {
+        // The bell just stays at its last known state if a source is down.
+      }
+    }
+
+    load();
+    const id = window.setInterval(load, REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -36,11 +82,26 @@ export function NotificationCenter() {
   }, []);
 
   function markAsRead(id: string) {
-    setNotifications((current) => current.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    setReadIds((current) => {
+      const next = new Set(current).add(id);
+      persistReadIds(next);
+      return next;
+    });
   }
 
   function markAllAsRead() {
-    setNotifications((current) => current.map((n) => ({ ...n, read: true })));
+    setReadIds((current) => {
+      const next = new Set(current);
+      notifications.forEach((notification) => next.add(notification.id));
+      persistReadIds(next);
+      return next;
+    });
+  }
+
+  function openNotification(notification: NotificationItem) {
+    markAsRead(notification.id);
+    setOpen(false);
+    navigate(notification.href);
   }
 
   return (
@@ -75,30 +136,31 @@ export function NotificationCenter() {
 
           <div className="max-h-96 overflow-y-auto">
             {notifications.length === 0 ? (
-              <p className="px-3 py-6 text-center text-sm text-content-muted">You're all caught up.</p>
+              <p className="px-3 py-6 text-center text-sm text-content-muted">
+                No firing alerts or warning events.
+              </p>
             ) : (
               notifications.map((notification) => {
                 const Icon = KIND_ICON[notification.kind];
+                const read = readIds.has(notification.id);
                 return (
                   <button
                     key={notification.id}
                     type="button"
-                    onClick={() => markAsRead(notification.id)}
+                    onClick={() => openNotification(notification)}
                     className={clsx(
                       "flex w-full items-start gap-3 border-b border-line px-3 py-3 text-left transition last:border-b-0 hover:bg-surface-hover",
-                      notification.read ? "opacity-60" : "",
+                      read ? "opacity-60" : "",
                     )}
                   >
                     <Icon className={clsx("mt-0.5 h-4 w-4 shrink-0", KIND_COLOR[notification.kind])} aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-sm font-medium text-content-primary">{notification.title}</p>
-                        {!notification.read ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" /> : null}
+                        {!read ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" /> : null}
                       </div>
-                      <p className="mt-0.5 text-xs text-content-secondary">{notification.description}</p>
-                      <p className="mt-1 text-[11px] text-content-muted">
-                        {formatRelativeTime(notification.createdAt)}
-                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-content-secondary">{notification.description}</p>
+                      <p className="mt-1 text-[11px] text-content-muted">{formatRelativeTime(notification.createdAt)}</p>
                     </div>
                   </button>
                 );

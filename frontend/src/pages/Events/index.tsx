@@ -17,7 +17,7 @@ import {
   eventColors,
 } from "@/components/charts/ChartCard";
 import { fetchEvents, type ClusterEvent, type EventType } from "@/services/events";
-import { formatRelativeTime } from "@/utils/mockData";
+import { formatRelativeTime } from "@/utils/format";
 
 const EVENT_TYPES: { key: EventType; label: string }[] = [
   { key: "Normal", label: "Normal" },

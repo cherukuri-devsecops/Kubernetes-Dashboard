@@ -4,16 +4,17 @@ import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 
 import { navItems } from "@/utils/navigation";
-import { mockSearchIndex, type SearchResult } from "@/utils/mockData";
+import { searchCluster, type SearchResult } from "@/services/search";
 
 const pageResults: SearchResult[] = navItems.map((item) => ({
-  id: item.href,
+  id: `page:${item.href}`,
   label: item.label,
   category: "Page",
+  namespace: null,
   href: item.href,
 }));
 
-const allResults: SearchResult[] = [...pageResults, ...mockSearchIndex];
+const SEARCH_DEBOUNCE_MS = 200;
 
 export function SearchBar() {
   const navigate = useNavigate();
@@ -23,14 +24,39 @@ export function SearchBar() {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const [clusterResults, setClusterResults] = useState<SearchResult[]>([]);
+
+  // Cluster objects are searched server-side; pages are matched locally.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setClusterResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      searchCluster(trimmed, 15)
+        .then((results) => {
+          if (!cancelled) setClusterResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setClusterResults([]);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
   const results = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return allResults.slice(0, 6);
-    return allResults.filter(
-      (result) =>
-        result.label.toLowerCase().includes(trimmed) || result.category.toLowerCase().includes(trimmed),
-    );
-  }, [query]);
+    if (!trimmed) return pageResults;
+    const pages = pageResults.filter((result) => result.label.toLowerCase().includes(trimmed));
+    return [...pages, ...clusterResults];
+  }, [query, clusterResults]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -119,7 +145,10 @@ export function SearchBar() {
                 index === activeIndex ? "bg-surface-hover text-content-primary" : "text-content-secondary",
               )}
             >
-              <span className="truncate">{result.label}</span>
+              <span className="truncate">
+                {result.label}
+                {result.namespace ? <span className="text-content-muted"> · {result.namespace}</span> : null}
+              </span>
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-content-muted">
                 {result.category}
                 {index === activeIndex ? <CornerDownLeft className="h-3 w-3" aria-hidden="true" /> : null}

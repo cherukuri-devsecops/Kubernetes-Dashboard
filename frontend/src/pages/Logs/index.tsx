@@ -3,7 +3,7 @@ import { Pause, Play, Search, X } from "lucide-react";
 import clsx from "clsx";
 
 import { LevelBadge } from "@/components/common/badges";
-import { type LogLevel } from "@/utils/mockData";
+import { type LogLevel } from "@/services/logs";
 import { searchLogs, type LogEntry } from "@/services/logs";
 
 const LEVELS: LogLevel[] = ["debug", "info", "warn", "error"];

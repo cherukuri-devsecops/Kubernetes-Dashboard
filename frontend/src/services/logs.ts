@@ -1,5 +1,9 @@
 import { apiFetch } from "@/api/client";
 
+/** Loki stores raw lines with no level label, so the UI classifies each line
+ * itself; this is the vocabulary it classifies into. */
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
 export type LogEntry = {
   timestamp: number;
   namespace: string;

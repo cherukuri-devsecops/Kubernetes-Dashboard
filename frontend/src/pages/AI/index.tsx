@@ -2,12 +2,13 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Bot, MessageSquarePlus, Sparkles, User } from "lucide-react";
 import clsx from "clsx";
 
-import { getCannedReply } from "@/utils/mockData";
+import { askAssistant, fetchSuggestions } from "@/services/ai";
 
 type ChatMessage = {
   id: string;
   role: "assistant" | "user";
   text: string;
+  sources?: string[];
 };
 
 type Conversation = {
@@ -17,18 +18,19 @@ type Conversation = {
   messages: ChatMessage[];
 };
 
-const SUGGESTIONS = [
+const FALLBACK_SUGGESTIONS = [
   "Why are pods restarting?",
   "Show me error logs",
-  "Top CPU consuming pods",
-  "Analyze database latency",
-  "Security issues in cluster",
+  "Top CPU consuming namespaces",
+  "Are all nodes ready?",
 ];
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
-  text: "Hi, I'm the cluster assistant. I'm a stub for now — ask about pods, CPU/memory, alerts, or logs to see a canned example response.",
+  text:
+    "Hi — I answer from your cluster's live data. Ask about pods, CPU, memory, alerts, logs, " +
+    "nodes, storage, traces, deployments, or RBAC.",
 };
 
 function newConversation(): Conversation {
@@ -49,7 +51,14 @@ export function AIPage() {
   const [active, setActive] = useState<Conversation>(() => newConversation());
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>(FALLBACK_SUGGESTIONS);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchSuggestions()
+      .then((list) => setSuggestions(list.length > 0 ? list : FALLBACK_SUGGESTIONS))
+      .catch(() => setSuggestions(FALLBACK_SUGGESTIONS));
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -59,7 +68,7 @@ export function AIPage() {
     setActive((current) => mutate(current));
   }
 
-  function sendMessage(text: string) {
+  async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -71,13 +80,20 @@ export function AIPage() {
     setInput("");
     setThinking(true);
 
-    window.setTimeout(() => {
-      updateActive((conversation) => ({
-        ...conversation,
-        messages: [...conversation.messages, { id: crypto.randomUUID(), role: "assistant", text: getCannedReply(trimmed) }],
-      }));
-      setThinking(false);
-    }, 700);
+    let reply: ChatMessage;
+    try {
+      const result = await askAssistant(trimmed);
+      reply = { id: crypto.randomUUID(), role: "assistant", text: result.answer, sources: result.sources };
+    } catch (exc) {
+      reply = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: exc instanceof Error ? `I could not reach the cluster data: ${exc.message}` : "Something went wrong.",
+      };
+    }
+
+    updateActive((conversation) => ({ ...conversation, messages: [...conversation.messages, reply] }));
+    setThinking(false);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -138,7 +154,7 @@ export function AIPage() {
           <p className="text-sm text-brand-400">AI</p>
           <h2 className="mt-1 text-xl font-semibold text-content-primary">Cluster assistant</h2>
           <p className="mt-1 text-sm text-content-muted">
-            Preview of an AI assistant panel. Replies are canned — no model is connected yet.
+            Answers are computed from live cluster data — the Kubernetes API, Prometheus, Loki, and Tempo.
           </p>
         </div>
 
@@ -160,7 +176,12 @@ export function AIPage() {
                     message.role === "assistant" ? "bg-surface-hover text-content-primary" : "bg-brand/[0.16] text-content-primary",
                   )}
                 >
-                  {message.text}
+                  <p className="whitespace-pre-wrap">{message.text}</p>
+                  {message.sources && message.sources.length > 0 ? (
+                    <p className="mt-2 border-t border-line pt-1.5 text-[11px] text-content-muted">
+                      Source: {message.sources.join(", ")}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -202,7 +223,7 @@ export function AIPage() {
           <Sparkles className="h-3 w-3 text-brand-400" aria-hidden="true" />
           Suggested Questions
         </p>
-        {SUGGESTIONS.map((suggestion) => (
+        {suggestions.map((suggestion) => (
           <button
             key={suggestion}
             type="button"

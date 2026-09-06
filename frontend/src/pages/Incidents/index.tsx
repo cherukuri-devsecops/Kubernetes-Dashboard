@@ -15,7 +15,7 @@ import {
   type IncidentSeverity,
   type IncidentStatus,
 } from "@/services/incidents";
-import { formatRelativeTime } from "@/utils/mockData";
+import { formatRelativeTime } from "@/utils/format";
 
 const SEVERITIES: { key: IncidentSeverity; label: string }[] = [
   { key: "sev1", label: "SEV1" },

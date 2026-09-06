@@ -52,6 +52,20 @@ def ensure_config_loaded(settings: Settings) -> None:
     _load_config(settings)
 
 
+A = TypeVar("A")
+
+
+def _api(settings: Settings, api_class: Callable[[], A]) -> A:
+    """Build an API client with the cluster config guaranteed to be loaded.
+
+    The generated clients capture the default Configuration at construction time,
+    so one built before the config is loaded binds to localhost:80 and fails —
+    which is what happened to whichever endpoint was hit first after a restart,
+    since _call() only loads the config once the client already exists."""
+    _load_config(settings)
+    return api_class()
+
+
 async def _call(settings: Settings, fn: Callable[[], T]) -> T:
     _load_config(settings)
 
@@ -265,7 +279,7 @@ def _event_summary(event: Any) -> dict[str, Any]:
 
 
 async def list_events(settings: Settings, namespace: str | None, limit: int) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     if namespace:
         result = await _call(settings, lambda: core_api.list_namespaced_event(namespace))
     else:
@@ -279,8 +293,8 @@ async def list_events(settings: Settings, namespace: str | None, limit: int) -> 
 
 
 async def get_cluster_info(settings: Settings) -> dict[str, Any]:
-    version_api = client.VersionApi()
-    core_api = client.CoreV1Api()
+    version_api = _api(settings, client.VersionApi)
+    core_api = _api(settings, client.CoreV1Api)
 
     version = await _call(settings, version_api.get_code)
     nodes = await _call(settings, core_api.list_node)
@@ -304,19 +318,19 @@ async def get_cluster_info(settings: Settings) -> dict[str, Any]:
 
 
 async def list_nodes(settings: Settings) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     result = await _call(settings, core_api.list_node)
     return [_node_summary(node) for node in result.items]
 
 
 async def list_namespaces(settings: Settings) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     result = await _call(settings, core_api.list_namespace)
     return [_namespace_summary(ns) for ns in result.items]
 
 
 async def list_pods(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     if namespace:
         result = await _call(settings, lambda: core_api.list_namespaced_pod(namespace))
     else:
@@ -325,7 +339,7 @@ async def list_pods(settings: Settings, namespace: str | None) -> list[dict[str,
 
 
 async def list_deployments(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    apps_api = client.AppsV1Api()
+    apps_api = _api(settings, client.AppsV1Api)
     if namespace:
         result = await _call(settings, lambda: apps_api.list_namespaced_deployment(namespace))
     else:
@@ -334,7 +348,7 @@ async def list_deployments(settings: Settings, namespace: str | None) -> list[di
 
 
 async def list_services(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     if namespace:
         result = await _call(settings, lambda: core_api.list_namespaced_service(namespace))
     else:
@@ -343,7 +357,7 @@ async def list_services(settings: Settings, namespace: str | None) -> list[dict[
 
 
 async def list_statefulsets(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    apps_api = client.AppsV1Api()
+    apps_api = _api(settings, client.AppsV1Api)
     if namespace:
         result = await _call(settings, lambda: apps_api.list_namespaced_stateful_set(namespace))
     else:
@@ -352,7 +366,7 @@ async def list_statefulsets(settings: Settings, namespace: str | None) -> list[d
 
 
 async def list_daemonsets(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    apps_api = client.AppsV1Api()
+    apps_api = _api(settings, client.AppsV1Api)
     if namespace:
         result = await _call(settings, lambda: apps_api.list_namespaced_daemon_set(namespace))
     else:
@@ -361,7 +375,7 @@ async def list_daemonsets(settings: Settings, namespace: str | None) -> list[dic
 
 
 async def list_jobs(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    batch_api = client.BatchV1Api()
+    batch_api = _api(settings, client.BatchV1Api)
     if namespace:
         result = await _call(settings, lambda: batch_api.list_namespaced_job(namespace))
     else:
@@ -370,9 +384,155 @@ async def list_jobs(settings: Settings, namespace: str | None) -> list[dict[str,
 
 
 async def list_pvcs(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
-    core_api = client.CoreV1Api()
+    core_api = _api(settings, client.CoreV1Api)
     if namespace:
         result = await _call(settings, lambda: core_api.list_namespaced_persistent_volume_claim(namespace))
     else:
         result = await _call(settings, core_api.list_persistent_volume_claim_for_all_namespaces)
     return [_pvc_summary(pvc) for pvc in result.items]
+
+
+def _service_account_summary(account: Any) -> dict[str, Any]:
+    return {
+        "name": account.metadata.name,
+        "namespace": account.metadata.namespace,
+        "secrets": [secret.name for secret in (account.secrets or []) if secret.name],
+        "imagePullSecrets": [ref.name for ref in (account.image_pull_secrets or []) if ref.name],
+        # None means "defaulted to true" in the API, which is what actually happens.
+        "automountToken": account.automount_service_account_token is not False,
+        "createdAt": _age(account),
+    }
+
+
+def _policy_rule_summary(rule: Any) -> dict[str, Any]:
+    return {
+        "apiGroups": list(rule.api_groups or []),
+        "resources": list(rule.resources or []),
+        "verbs": list(rule.verbs or []),
+        "resourceNames": list(rule.resource_names or []),
+        "nonResourceUrls": list(rule.non_resource_ur_ls or []),
+    }
+
+
+# Verbs that mutate, used to label a role read-only vs. write in the UI.
+_WRITE_VERBS = {"create", "update", "patch", "delete", "deletecollection", "*"}
+
+
+def _role_summary(role: Any, kind: str) -> dict[str, Any]:
+    rules = [_policy_rule_summary(rule) for rule in (role.rules or [])]
+    verbs = {verb for rule in rules for verb in rule["verbs"]}
+    resources = sorted({resource for rule in rules for resource in rule["resources"]})
+    return {
+        "name": role.metadata.name,
+        "kind": kind,
+        "namespace": role.metadata.namespace,
+        "scope": "Cluster" if kind == "ClusterRole" else (role.metadata.namespace or ""),
+        "rules": rules,
+        "ruleCount": len(rules),
+        "resources": resources,
+        "access": "write" if verbs & _WRITE_VERBS else "read",
+        "isDefault": role.metadata.name.startswith("system:"),
+        "createdAt": _age(role),
+    }
+
+
+def _binding_summary(binding: Any, kind: str) -> dict[str, Any]:
+    role_ref = binding.role_ref
+    subjects = [
+        {
+            "kind": subject.kind or "Unknown",
+            "name": subject.name or "",
+            "namespace": getattr(subject, "namespace", None),
+        }
+        for subject in (binding.subjects or [])
+    ]
+    return {
+        "name": binding.metadata.name,
+        "kind": kind,
+        "namespace": binding.metadata.namespace,
+        "scope": "Cluster" if kind == "ClusterRoleBinding" else (binding.metadata.namespace or ""),
+        "roleKind": role_ref.kind if role_ref else "Unknown",
+        "roleName": role_ref.name if role_ref else "unknown",
+        "subjects": subjects,
+        "isDefault": binding.metadata.name.startswith("system:"),
+        "createdAt": _age(binding),
+    }
+
+
+async def list_service_accounts(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
+    core_api = _api(settings, client.CoreV1Api)
+    if namespace:
+        result = await _call(settings, lambda: core_api.list_namespaced_service_account(namespace))
+    else:
+        result = await _call(settings, core_api.list_service_account_for_all_namespaces)
+    return [_service_account_summary(account) for account in result.items]
+
+
+async def list_roles(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
+    """ClusterRoles and (namespaced) Roles as one list — the UI shows them together
+    and distinguishes them by their `scope`."""
+    rbac_api = _api(settings, client.RbacAuthorizationV1Api)
+    cluster_roles = await _call(settings, rbac_api.list_cluster_role)
+    if namespace:
+        roles = await _call(settings, lambda: rbac_api.list_namespaced_role(namespace))
+    else:
+        roles = await _call(settings, rbac_api.list_role_for_all_namespaces)
+
+    summaries = [_role_summary(role, "ClusterRole") for role in cluster_roles.items]
+    summaries += [_role_summary(role, "Role") for role in roles.items]
+    summaries.sort(key=lambda item: (item["isDefault"], item["name"]))
+    return summaries
+
+
+async def list_role_bindings(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
+    rbac_api = _api(settings, client.RbacAuthorizationV1Api)
+    cluster_bindings = await _call(settings, rbac_api.list_cluster_role_binding)
+    if namespace:
+        bindings = await _call(settings, lambda: rbac_api.list_namespaced_role_binding(namespace))
+    else:
+        bindings = await _call(settings, rbac_api.list_role_binding_for_all_namespaces)
+
+    summaries = [_binding_summary(binding, "ClusterRoleBinding") for binding in cluster_bindings.items]
+    summaries += [_binding_summary(binding, "RoleBinding") for binding in bindings.items]
+    summaries.sort(key=lambda item: (item["isDefault"], item["name"]))
+    return summaries
+
+
+async def list_subjects(settings: Settings, namespace: str | None) -> list[dict[str, Any]]:
+    """Every identity that RBAC actually grants access to, folded together across
+    bindings. This is the cluster's answer to "who are the users" — Kubernetes has
+    no User object, so a subject only exists by virtue of the bindings naming it."""
+    bindings = await list_role_bindings(settings, namespace)
+
+    subjects: dict[str, dict[str, Any]] = {}
+    for binding in bindings:
+        for subject in binding["subjects"]:
+            key = f"{subject['kind']}/{subject.get('namespace') or ''}/{subject['name']}"
+            entry = subjects.setdefault(
+                key,
+                {
+                    "id": key,
+                    "kind": subject["kind"],
+                    "name": subject["name"],
+                    "namespace": subject.get("namespace"),
+                    "roles": [],
+                    "namespaces": set(),
+                    "isDefault": True,
+                },
+            )
+            entry["roles"].append(
+                {"role": binding["roleName"], "kind": binding["roleKind"], "binding": binding["name"], "scope": binding["scope"]}
+            )
+            entry["namespaces"].add(binding["scope"])
+            # An identity is only "default" if every binding granting it is.
+            entry["isDefault"] = entry["isDefault"] and binding["isDefault"]
+
+    result = []
+    for entry in subjects.values():
+        entry["namespaces"] = sorted(ns for ns in entry["namespaces"] if ns)
+        entry["roleCount"] = len(entry["roles"])
+        entry["clusterWide"] = any(role["scope"] == "Cluster" for role in entry["roles"])
+        result.append(entry)
+
+    result.sort(key=lambda item: (item["isDefault"], item["kind"], item["name"]))
+    return result

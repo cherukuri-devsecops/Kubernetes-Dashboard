@@ -10,6 +10,7 @@ Stage 3 adds live Kubernetes integration on top of the Stage 1 foundation and St
 - PostgreSQL and Redis wiring for local development
 - Helm chart with Kubernetes namespace, NGINX Ingress, cert-manager issuer, External Secrets scaffold, and app workloads
 - **Kubernetes Explorer**: live cluster info, nodes, namespaces, pods, deployments, services, statefulsets, daemonsets, jobs, and PVCs, read via the Kubernetes Python client
+- **No mock data**: every panel — alerts, traces, events, reports, RBAC, search, notifications, and the assistant — is served from the live cluster
 
 ## Kubernetes Explorer (Stage 3)
 
@@ -18,11 +19,37 @@ The backend talks to the Kubernetes API using the official [Python client](https
 1. In-cluster config (when the backend runs as a pod — this is how the Helm chart deploys it)
 2. Local kubeconfig (`KUBECONFIG` env var, or `~/.kube/config` by default) — used for local development
 
-Endpoints (all under `/api/k8s`, all require a bearer token): `cluster`, `nodes`, `namespaces`, `pods`, `deployments`, `services`, `statefulsets`, `daemonsets`, `jobs`, `pvcs`. The namespaced endpoints accept an optional `?namespace=` query parameter.
+Endpoints (all under `/api/k8s`, all require a bearer token): `cluster`, `nodes`, `namespaces`, `pods`, `deployments`, `services`, `statefulsets`, `daemonsets`, `jobs`, `pvcs`, `serviceaccounts`, `roles`, `rolebindings`, `subjects`. The namespaced endpoints accept an optional `?namespace=` query parameter.
 
 For `docker compose`, the backend container mounts `~/.kube` (override with `KUBECONFIG_HOST_PATH`) so it can reach whatever cluster your host kubeconfig points at (e.g. a local Kind/Minikube cluster). If the cluster's API server address isn't reachable from inside the container network, point your kubeconfig's `server:` at `host.docker.internal` instead of `127.0.0.1`.
 
-In the cluster, the Helm chart creates a dedicated `ServiceAccount` bound to a read-only `ClusterRole` (get/list/watch on nodes, namespaces, pods, services, PVCs, deployments, statefulsets, daemonsets, and jobs) — no extra setup needed.
+In the cluster, the Helm chart creates a dedicated `ServiceAccount` bound to a read-only `ClusterRole` (get/list/watch on nodes, namespaces, pods, services, PVCs, deployments, statefulsets, daemonsets, jobs, service accounts, and RBAC roles/bindings) — no extra setup needed.
+
+## Where Each Panel's Data Comes From
+
+The dashboard holds no fixtures or generated sample data. Every figure on screen is read at request time:
+
+| Area | Endpoint | Source |
+| --- | --- | --- |
+| Overview, Kubernetes explorer | `/api/k8s/*` | Kubernetes API |
+| Metrics, gauges, top pods/namespaces | `/api/metrics/*` | Prometheus (cAdvisor, node-exporter, kube-state-metrics) |
+| Logs | `/api/logs/search`, `/api/logs/stream` | Loki, and the Kubernetes API for live pod tailing |
+| Events | `/api/events` | Kubernetes API |
+| Alerts | `/api/alerts` | Prometheus alerting rules and active alerts |
+| Traces | `/api/traces` | Tempo |
+| Reports | `/api/reports/*` | Kubernetes API + Prometheus, computed per request |
+| Admin (subjects, roles, bindings, service accounts) | `/api/k8s/*` | Kubernetes RBAC |
+| Global search | `/api/search` | Kubernetes API |
+| Notifications | `/api/alerts` + `/api/events` | Firing alerts and Warning events |
+| Assistant | `/api/ai/query` | Whichever of the above answers the question, named in the reply |
+
+### Alerting rules
+
+Prometheus ships with no alerting rules of its own, so the chart installs a rule set (`alert-rules.yml` in the Prometheus ConfigMap) covering node readiness and pressure, crash-looping and non-running pods, degraded deployments, pending PVCs, and dead scrape targets. The same rules are mounted into the `docker compose` Prometheus from `monitoring/prometheus/alert-rules.yml`. Without them the Alerts page correctly shows that nothing is configured.
+
+### Assistant
+
+`/api/ai/query` matches a question to an intent, runs the real queries for it, and answers with what they returned — each reply names the data sources behind it. There is no language model in the loop, so it cannot invent a number that the cluster did not report.
 
 ## Local Development
 

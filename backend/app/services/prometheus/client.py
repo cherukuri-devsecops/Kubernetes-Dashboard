@@ -1,3 +1,4 @@
+import hashlib
 from typing import Any
 
 import httpx
@@ -299,3 +300,115 @@ async def pod_usage_range(
         "networkRx": _series(net_rx),
         "networkTx": _series(net_tx),
     }
+
+
+# ---------------------------------------------------------------------------
+# Alerting rules and active alerts
+# ---------------------------------------------------------------------------
+
+# Prometheus alert severities are free-form labels; anything a rule sets that we
+# do not recognise is surfaced as "info" rather than dropped.
+_KNOWN_SEVERITIES = {"critical", "warning", "info"}
+
+# Label keys that identify what an alert is about, most specific first.
+_RESOURCE_LABELS = (
+    "pod",
+    "deployment",
+    "statefulset",
+    "daemonset",
+    "job_name",
+    "persistentvolumeclaim",
+    "container",
+)
+
+
+def _severity(value: str | None) -> str:
+    normalized = (value or "").lower()
+    if normalized in _KNOWN_SEVERITIES:
+        return normalized
+    if normalized in {"page", "critical", "emergency", "fatal"}:
+        return "critical"
+    if normalized in {"warn", "warning", "high"}:
+        return "warning"
+    return "info"
+
+
+def _alert_resource(labels: dict[str, str]) -> str:
+    """Best-effort "what is this alert about" string, built from alert labels."""
+    namespace = labels.get("namespace", "")
+    for key in _RESOURCE_LABELS:
+        name = labels.get(key)
+        if name:
+            return f"{namespace}/{name}" if namespace else name
+    node = labels.get("node") or labels.get("instance")
+    if node:
+        return f"node/{node}"
+    return namespace or "cluster"
+
+
+def _alert_id(labels: dict[str, str]) -> str:
+    """Stable id across polls: Prometheus identifies an alert by its label set,
+    and the UI needs the selected row to survive a refresh."""
+    fingerprint = "|".join(f"{key}={value}" for key, value in sorted(labels.items()))
+    return hashlib.sha1(fingerprint.encode()).hexdigest()[:16]
+
+
+def _alert_summary(alert: dict[str, Any]) -> dict[str, Any]:
+    labels = alert.get("labels") or {}
+    annotations = alert.get("annotations") or {}
+    return {
+        "id": _alert_id(labels),
+        "name": labels.get("alertname", "unknown"),
+        "severity": _severity(labels.get("severity")),
+        "state": alert.get("state", "firing"),
+        "resource": _alert_resource(labels),
+        "summary": annotations.get("summary", ""),
+        "message": annotations.get("description") or annotations.get("summary") or "",
+        "runbookUrl": annotations.get("runbook_url", ""),
+        "startedAt": alert.get("activeAt"),
+        "value": alert.get("value"),
+        "labels": labels,
+    }
+
+
+async def active_alerts(settings: Settings) -> list[dict[str, Any]]:
+    data = await _get(settings, "/api/v1/alerts", {})
+    alerts = [_alert_summary(alert) for alert in data.get("alerts") or []]
+    alerts.sort(key=lambda item: item["startedAt"] or "", reverse=True)
+    return alerts
+
+
+async def alert_rules(settings: Settings) -> list[dict[str, Any]]:
+    """Every configured alerting rule, firing or not, so the UI can show which
+    rules exist rather than only what happens to be active right now."""
+    data = await _get(settings, "/api/v1/rules", {"type": "alert"})
+    rules: list[dict[str, Any]] = []
+    for group in data.get("groups") or []:
+        for rule in group.get("rules") or []:
+            if rule.get("type") != "alerting":
+                continue
+            labels = rule.get("labels") or {}
+            annotations = rule.get("annotations") or {}
+            rules.append(
+                {
+                    "name": rule.get("name", "unknown"),
+                    "group": group.get("name", ""),
+                    "severity": _severity(labels.get("severity")),
+                    "state": rule.get("state", "inactive"),
+                    "query": rule.get("query", ""),
+                    "durationSeconds": rule.get("duration", 0),
+                    "summary": annotations.get("summary", ""),
+                    "description": annotations.get("description", ""),
+                    "activeCount": len(rule.get("alerts") or []),
+                    "health": rule.get("health", "unknown"),
+                    "lastError": rule.get("lastError", ""),
+                }
+            )
+    return rules
+
+
+async def top_by_label(settings: Settings, promql: str, label: str, limit: int) -> list[dict[str, Any]]:
+    """Ranked label/value pairs — the shape the assistant and reports both want."""
+    data = await query(settings, promql)
+    pairs = sorted(_by_label(data, label).items(), key=lambda item: item[1], reverse=True)
+    return [{"name": name, "value": value} for name, value in pairs[:limit]]

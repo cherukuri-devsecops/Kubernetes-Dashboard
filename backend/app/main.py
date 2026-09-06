@@ -4,8 +4,9 @@ from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import auth, events, incidents, kubernetes, logs, metrics
+from app.api import ai, alerts, auth, events, incidents, kubernetes, logs, metrics, reports, search, traces
 from app.api import health
 from app.api.health import build_health_response
 from app.config import Settings, get_settings
@@ -51,6 +52,12 @@ app = FastAPI(
 
 instrument_app(app, settings)
 
+# Serves /metrics for the `backend` Prometheus scrape job, which the chart has
+# always defined but nothing answered — leaving the target permanently down.
+Instrumentator(excluded_handlers=["/metrics", "/health"]).instrument(app).expose(
+    app, endpoint="/metrics", include_in_schema=False
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -66,6 +73,11 @@ app.include_router(metrics.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
 app.include_router(incidents.router, prefix="/api")
+app.include_router(alerts.router, prefix="/api")
+app.include_router(traces.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 
 
 @app.get("/", tags=["system"])

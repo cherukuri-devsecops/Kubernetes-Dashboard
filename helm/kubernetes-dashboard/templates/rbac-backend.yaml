@@ -23,11 +23,20 @@ rules:
       - services
       - persistentvolumeclaims
       - events
+      - serviceaccounts
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources:
       - pods/log
     verbs: ["get"]
+  # Read-only RBAC introspection, for the Admin page and the RBAC audit report.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - clusterroles
+      - rolebindings
+      - clusterrolebindings
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources:
       - deployments

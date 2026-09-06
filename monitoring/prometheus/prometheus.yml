@@ -2,6 +2,11 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Same alerting rules the Helm chart installs, evaluated against the metrics
+# federated in below so the local stack has real alerts too.
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
 scrape_configs:
   - job_name: federate-in-cluster
     honor_labels: true

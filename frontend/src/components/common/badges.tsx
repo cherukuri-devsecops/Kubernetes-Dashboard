@@ -1,10 +1,11 @@
 import clsx from "clsx";
 
-import type { AlertSeverity, AlertStatus, LogLevel, SpanStatus } from "@/utils/mockData";
+import type { AlertSeverity, AlertState } from "@/services/alerts";
+import type { SpanStatus } from "@/services/traces";
+import type { LogLevel } from "@/services/logs";
 import type { EventType } from "@/services/events";
 import type { IncidentSeverity, IncidentStatus } from "@/services/incidents";
-import type { AuditResult, ClusterStatus, UserRole, UserStatus } from "@/utils/mockAdmin";
-import type { ReportStatus } from "@/utils/mockReports";
+import type { RbacRole, SubjectKind } from "@/services/rbac";
 
 export type PillTone = "green" | "amber" | "red" | "blue" | "violet" | "neutral";
 
@@ -55,16 +56,18 @@ export function SeverityBadge({ severity }: { severity: AlertSeverity }) {
   );
 }
 
-const ALERT_STATUS_STYLES: Record<AlertStatus, string> = {
+type RuleState = AlertState | "inactive";
+
+const ALERT_STATE_STYLES: Record<RuleState, string> = {
   firing: "bg-signal-red/10 text-signal-red",
-  acknowledged: "bg-signal-amber/10 text-signal-amber",
-  resolved: "bg-signal-green/10 text-signal-green",
+  pending: "bg-signal-amber/10 text-signal-amber",
+  inactive: "bg-signal-green/10 text-signal-green",
 };
 
-export function AlertStatusBadge({ status }: { status: AlertStatus }) {
+export function AlertStateBadge({ state }: { state: RuleState }) {
   return (
-    <span className={clsx("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium capitalize", ALERT_STATUS_STYLES[status])}>
-      {status}
+    <span className={clsx("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium capitalize", ALERT_STATE_STYLES[state])}>
+      {state}
     </span>
   );
 }
@@ -118,47 +121,21 @@ export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
   return <Pill label={status} tone={INCIDENT_STATUS_TONES[status]} className="capitalize" />;
 }
 
-const REPORT_STATUS_TONES: Record<ReportStatus, PillTone> = {
-  ready: "green",
-  generating: "blue",
-  failed: "red",
+const SUBJECT_KIND_TONES: Record<string, PillTone> = {
+  User: "violet",
+  Group: "blue",
+  ServiceAccount: "neutral",
 };
 
-export function ReportStatusBadge({ status }: { status: ReportStatus }) {
-  return <Pill label={status} tone={REPORT_STATUS_TONES[status]} className="capitalize" />;
+export function SubjectKindBadge({ kind }: { kind: SubjectKind }) {
+  return <Pill label={kind} tone={SUBJECT_KIND_TONES[kind] ?? "neutral"} />;
 }
 
-const CLUSTER_STATUS_TONES: Record<ClusterStatus, PillTone> = {
-  connected: "green",
-  degraded: "amber",
-  disconnected: "red",
-};
-
-export function ClusterStatusBadge({ status }: { status: ClusterStatus }) {
-  return <Pill label={status} tone={CLUSTER_STATUS_TONES[status]} className="capitalize" />;
+/** Whether a role's verbs can mutate the cluster, not who holds it. */
+export function AccessBadge({ access }: { access: RbacRole["access"] }) {
+  return <Pill label={access} tone={access === "write" ? "amber" : "green"} className="capitalize" />;
 }
 
-const USER_STATUS_TONES: Record<UserStatus, PillTone> = {
-  active: "green",
-  invited: "blue",
-  disabled: "neutral",
-};
-
-export function UserStatusBadge({ status }: { status: UserStatus }) {
-  return <Pill label={status} tone={USER_STATUS_TONES[status]} className="capitalize" />;
-}
-
-const ROLE_TONES: Record<UserRole, PillTone> = {
-  admin: "violet",
-  operator: "blue",
-  developer: "neutral",
-  viewer: "neutral",
-};
-
-export function RoleBadge({ role }: { role: UserRole }) {
-  return <Pill label={role} tone={ROLE_TONES[role]} className="capitalize" />;
-}
-
-export function AuditResultBadge({ result }: { result: AuditResult }) {
-  return <Pill label={result} tone={result === "success" ? "green" : "red"} className="capitalize" />;
+export function ScopeBadge({ scope }: { scope: string }) {
+  return <Pill label={scope || "—"} tone={scope === "Cluster" ? "violet" : "neutral"} />;
 }

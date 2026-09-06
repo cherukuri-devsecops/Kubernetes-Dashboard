@@ -105,3 +105,39 @@ async def pvcs(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, Any]]:
     return await _run(k8s_client.list_pvcs(settings, namespace))
+
+
+@router.get("/serviceaccounts")
+async def service_accounts(
+    namespace: str | None = Query(default=None),
+    _user: AuthenticatedUser = Depends(require_user),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, Any]]:
+    return await _run(k8s_client.list_service_accounts(settings, namespace))
+
+
+@router.get("/roles")
+async def roles(
+    namespace: str | None = Query(default=None),
+    _user: AuthenticatedUser = Depends(require_user),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, Any]]:
+    return await _run(k8s_client.list_roles(settings, namespace))
+
+
+@router.get("/rolebindings")
+async def role_bindings(
+    namespace: str | None = Query(default=None),
+    _user: AuthenticatedUser = Depends(require_user),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, Any]]:
+    return await _run(k8s_client.list_role_bindings(settings, namespace))
+
+
+@router.get("/subjects")
+async def subjects(
+    namespace: str | None = Query(default=None),
+    _user: AuthenticatedUser = Depends(require_user),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, Any]]:
+    return await _run(k8s_client.list_subjects(settings, namespace))

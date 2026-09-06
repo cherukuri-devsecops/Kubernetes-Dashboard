@@ -12,7 +12,6 @@ import {
   Cpu,
   Gauge as GaugeIcon,
   RefreshCw,
-  ScrollText,
   Send,
   Server,
   Sparkles,
@@ -25,11 +24,22 @@ import { ChartCard, chartAxisColor, chartGridColor, chartTooltipContentStyle, ch
 import { GaugeChart } from "@/components/charts/GaugeChart";
 import { DonutChart, type DonutSegment } from "@/components/charts/DonutChart";
 import { Sparkline, type SparklinePoint } from "@/components/charts/Sparkline";
-import { AlertStatusBadge, SeverityBadge } from "@/components/common/badges";
-import { fetchClusterInfo, fetchNamespaces, fetchPods, fetchServices, type ClusterInfo, type K8sPod } from "@/services/kubernetes";
-import { fetchClusterMetrics, fetchClusterMetricsRange, fetchPodMetrics, type ClusterMetrics } from "@/services/metrics";
+import { AlertStateBadge, SeverityBadge } from "@/components/common/badges";
+import { fetchClusterInfo, fetchNamespaces, fetchPods, type ClusterInfo, type K8sPod } from "@/services/kubernetes";
+import {
+  fetchClusterMetrics,
+  fetchClusterMetricsRange,
+  fetchNamespaceMetrics,
+  fetchPodMetrics,
+  type ClusterMetrics,
+  type NamespaceMetric,
+} from "@/services/metrics";
 import { searchLogs, type LogEntry } from "@/services/logs";
-import { formatDuration, generateAlerts, generateTraces, getCannedReply, type AlertItem, type Trace } from "@/utils/mockData";
+import { fetchAlerts, type AlertItem } from "@/services/alerts";
+import { fetchTraces, type TraceSummary } from "@/services/traces";
+import { fetchEvents, type ClusterEvent } from "@/services/events";
+import { askAssistant } from "@/services/ai";
+import { formatBytes, formatDuration } from "@/utils/format";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const REFRESH_INTERVAL_MS = 30000;
@@ -50,16 +60,6 @@ function formatTime(unixSeconds: number): string {
 
 function bytesToGiB(bytes: number): number {
   return Math.round((bytes / 1024 ** 3) * 100) / 100;
-}
-
-function hashSeed(seed: string): number {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  return hash;
-}
-
-function seededRange(seed: string, min: number, max: number): number {
-  return min + (hashSeed(seed) % (max - min));
 }
 
 type PodUsage = { pod: string; namespace: string; cpuCores: number; memoryBytes: number };
@@ -110,32 +110,32 @@ export function DashboardPage() {
   const [pods, setPods] = useState<K8sPod[]>([]);
   const [topCpuPods, setTopCpuPods] = useState<PodUsage[]>([]);
   const [topMemoryPods, setTopMemoryPods] = useState<PodUsage[]>([]);
-  const [services, setServices] = useState<{ name: string; namespace: string }[]>([]);
+  const [namespaceUsage, setNamespaceUsage] = useState<NamespaceMetric[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [traces, setTraces] = useState<TraceSummary[]>([]);
+  const [events, setEvents] = useState<ClusterEvent[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const alerts = useMemo<AlertItem[]>(() => generateAlerts(), []);
-  const traces = useMemo<Trace[]>(() => generateTraces().slice(0, 5), []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const [info, cluster, range_, allPods, namespaces, svcs] = await Promise.all([
+        const [info, cluster, range_, allPods, namespaces, nsUsage] = await Promise.all([
           fetchClusterInfo(),
           fetchClusterMetrics(),
           fetchClusterMetricsRange(rangeSettings.rangeMinutes, rangeSettings.stepSeconds),
           fetchPods(null),
           fetchNamespaces(),
-          fetchServices(null).catch(() => []),
+          fetchNamespaceMetrics().catch(() => [] as NamespaceMetric[]),
         ]);
         if (cancelled) return;
 
         setClusterInfo(info);
         setClusterMetrics(cluster);
         setPods(allPods);
-        setServices(svcs.slice(0, 5).map((s) => ({ name: s.name, namespace: s.namespace })));
+        setNamespaceUsage([...nsUsage].sort((a, b) => b.cpuCores - a.cpuCores).slice(0, 5));
         setCpuSeries(range_.cpu.map((p) => ({ time: formatTime(Number(p.time)), value: Math.round(p.value * 1000) / 1000 })));
         setMemorySeries(range_.memory.map((p) => ({ time: formatTime(Number(p.time)), value: bytesToGiB(p.value) })));
 
@@ -164,6 +164,30 @@ export function DashboardPage() {
       window.clearInterval(id);
     };
   }, [rangeSettings]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSignals() {
+      // Each panel degrades on its own — Tempo being down shouldn't blank alerts.
+      const [alertsResult, tracesResult, eventsResult] = await Promise.allSettled([
+        fetchAlerts(),
+        fetchTraces({ limit: 5, rangeMinutes: 60 }),
+        fetchEvents(null, 40),
+      ]);
+      if (cancelled) return;
+      if (alertsResult.status === "fulfilled") setAlerts(alertsResult.value.alerts);
+      if (tracesResult.status === "fulfilled") setTraces(tracesResult.value);
+      if (eventsResult.status === "fulfilled") setEvents(eventsResult.value.slice(0, 8));
+    }
+
+    loadSignals();
+    const id = window.setInterval(loadSignals, REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,9 +223,9 @@ export function DashboardPage() {
 
   const nodeHealthPercent = clusterInfo && clusterInfo.nodeCount > 0 ? Math.round((clusterInfo.readyNodeCount / clusterInfo.nodeCount) * 100) : null;
 
-  const firingAlerts = alerts.filter((a) => a.status === "firing");
-  const criticalAlerts = alerts.filter((a) => a.severity === "critical" && a.status !== "resolved");
-  const warningAlerts = alerts.filter((a) => a.severity === "warning" && a.status !== "resolved");
+  const criticalAlerts = alerts.filter((alert) => alert.severity === "critical");
+  const warningAlerts = alerts.filter((alert) => alert.severity === "warning");
+  const infoAlerts = alerts.filter((alert) => alert.severity === "info");
 
   const podStatusSegments: DonutSegment[] = [
     { key: "running", label: "Running", value: podCounts.running, color: "#31d0aa" },
@@ -212,32 +236,13 @@ export function DashboardPage() {
   const alertSeveritySegments: DonutSegment[] = [
     { key: "critical", label: "Critical", value: criticalAlerts.length, color: "#ff6b6b" },
     { key: "warning", label: "Warning", value: warningAlerts.length, color: "#f5c66a" },
-    { key: "info", label: "Info", value: alerts.filter((a) => a.severity === "info" && a.status !== "resolved").length, color: "#6ea8fe" },
+    { key: "info", label: "Info", value: infoAlerts.length, color: "#6ea8fe" },
   ];
 
   const aiInsights = [...criticalAlerts, ...warningAlerts].slice(0, 3);
 
-  const events = useMemo(() => {
-    const sourcePods = pods.length > 0 ? pods.slice(0, 5) : [];
-    const templates = [
-      { type: "Warning" as const, reason: "BackOff", message: "Back-off restarting failed container" },
-      { type: "Normal" as const, reason: "Pulled", message: "Successfully pulled image" },
-      { type: "Normal" as const, reason: "Scheduled", message: "Successfully assigned to node" },
-      { type: "Normal" as const, reason: "Created", message: "Created container" },
-      { type: "Warning" as const, reason: "Unhealthy", message: "Readiness probe failed" },
-    ];
-    if (sourcePods.length === 0) return [];
-    return templates.map((tmpl, index) => {
-      const pod = sourcePods[index % sourcePods.length];
-      return {
-        id: `${pod.namespace}/${pod.name}/${tmpl.reason}`,
-        time: new Date(Date.now() - seededRange(`${pod.name}${tmpl.reason}`, 30, 900) * 1000),
-        ...tmpl,
-        object: `pod/${pod.name}`,
-        namespace: pod.namespace,
-      };
-    });
-  }, [pods]);
+  // Trace bars are scaled against the slowest trace on screen, not a fixed ceiling.
+  const slowestTraceMs = Math.max(...traces.map((trace) => trace.durationMs), 1);
 
   return (
     <div className="mx-auto flex w-full max-w-[1700px] flex-col gap-4 xl:flex-row xl:items-start">
@@ -441,18 +446,22 @@ export function DashboardPage() {
             }
           >
             <ul className="divide-y divide-line">
-              {alerts.slice(0, 4).map((alert) => (
-                <li key={alert.id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs text-content-primary">{alert.name}</p>
-                    <p className="truncate text-[11px] text-content-muted">{alert.resource}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <SeverityBadge severity={alert.severity} />
-                    <AlertStatusBadge status={alert.status} />
-                  </div>
-                </li>
-              ))}
+              {alerts.length === 0 ? (
+                <li className="py-2 text-xs text-content-muted">Nothing is firing.</li>
+              ) : (
+                alerts.slice(0, 4).map((alert) => (
+                  <li key={alert.id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs text-content-primary">{alert.name}</p>
+                      <p className="truncate text-[11px] text-content-muted">{alert.resource}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <SeverityBadge severity={alert.severity} />
+                      <AlertStateBadge state={alert.state} />
+                    </div>
+                  </li>
+                ))
+              )}
             </ul>
           </SectionCard>
         </section>
@@ -493,22 +502,28 @@ export function DashboardPage() {
             }
           >
             <ul className="space-y-2.5">
-              {traces.map((trace) => (
-                <li key={trace.id} className="text-xs">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="truncate text-content-primary">
-                      {trace.rootService} <span className="text-content-muted">→ {trace.operation}</span>
-                    </span>
-                    <span className="shrink-0 text-content-muted">{formatDuration(trace.durationMs)}</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-surface-hover">
-                    <div
-                      className={clsx("h-1.5 rounded-full", trace.status === "error" ? "bg-signal-red" : "bg-brand")}
-                      style={{ width: `${Math.min((trace.durationMs / 1500) * 100, 100)}%` }}
-                    />
-                  </div>
-                </li>
-              ))}
+              {traces.length === 0 ? (
+                <li className="text-xs text-content-muted">No traces recorded in the last hour.</li>
+              ) : (
+                traces.map((trace) => {
+                  return (
+                    <li key={trace.id} className="text-xs">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate text-content-primary">
+                          {trace.rootService} <span className="text-content-muted">→ {trace.operation}</span>
+                        </span>
+                        <span className="shrink-0 text-content-muted">{formatDuration(trace.durationMs)}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface-hover">
+                        <div
+                          className={clsx("h-1.5 rounded-full", trace.status === "error" ? "bg-signal-red" : "bg-brand")}
+                          style={{ width: `${Math.max((trace.durationMs / slowestTraceMs) * 100, 4)}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                })
+              )}
             </ul>
           </SectionCard>
 
@@ -543,29 +558,32 @@ export function DashboardPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Top Services by Request Rate">
+          <SectionCard title="Top Namespaces by CPU">
             <ul className="space-y-2.5">
-              {services.length === 0 ? (
-                <li className="text-xs text-content-muted">No services found.</li>
+              {namespaceUsage.length === 0 ? (
+                <li className="text-xs text-content-muted">No namespace metrics available.</li>
               ) : (
-                services.map((svc) => {
-                  const rate = seededRange(`${svc.namespace}/${svc.name}`, 20, 260);
-                  const max = 260;
+                namespaceUsage.map((namespace) => {
+                  const max = namespaceUsage[0]?.cpuCores || 1;
                   return (
-                    <li key={`${svc.namespace}/${svc.name}`} className="text-xs">
+                    <li key={namespace.namespace} className="text-xs">
                       <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-content-primary">{svc.name}</span>
-                        <span className="shrink-0 text-content-muted">{rate} req/s</span>
+                        <span className="truncate text-content-primary">{namespace.namespace}</span>
+                        <span className="shrink-0 text-content-muted">
+                          {namespace.cpuCores.toFixed(3)} cores · {formatBytes(namespace.memoryBytes)}
+                        </span>
                       </div>
                       <div className="h-1.5 rounded-full bg-surface-hover">
-                        <div className="h-1.5 rounded-full bg-brand" style={{ width: `${(rate / max) * 100}%` }} />
+                        <div
+                          className="h-1.5 rounded-full bg-brand"
+                          style={{ width: `${Math.max((namespace.cpuCores / max) * 100, 4)}%` }}
+                        />
                       </div>
                     </li>
                   );
                 })
               )}
             </ul>
-            <p className="mt-3 text-[11px] text-content-muted">Simulated — no service-mesh/ingress request-rate metrics wired up yet.</p>
           </SectionCard>
 
           <SectionCard title="AI Insights">
@@ -591,10 +609,6 @@ export function DashboardPage() {
           </SectionCard>
         </section>
 
-        <div className="flex items-center gap-2 text-xs text-content-muted">
-          <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
-          Alerts, traces, events, and request rates are simulated previews — Prometheus/Loki-backed panels above are live.
-        </div>
       </div>
 
       <AssistantPanel />
@@ -602,10 +616,14 @@ export function DashboardPage() {
   );
 }
 
-type ChatMessage = { id: string; role: "assistant" | "user"; text: string };
+type ChatMessage = { id: string; role: "assistant" | "user"; text: string; sources?: string[] };
 
 const INITIAL_MESSAGES: ChatMessage[] = [
-  { id: "welcome", role: "assistant", text: "Ask me about pods, CPU/memory, alerts, or logs across the cluster." },
+  {
+    id: "welcome",
+    role: "assistant",
+    text: "Ask me about pods, CPU/memory, alerts, logs, nodes, or RBAC — I answer from live cluster data.",
+  },
 ];
 
 function AssistantPanel() {
@@ -620,16 +638,27 @@ function AssistantPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
-  function sendMessage(text: string) {
+  async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
     setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", text: trimmed }]);
     setInput("");
     setThinking(true);
-    window.setTimeout(() => {
-      setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", text: getCannedReply(trimmed) }]);
-      setThinking(false);
-    }, 700);
+
+    let reply: ChatMessage;
+    try {
+      const result = await askAssistant(trimmed);
+      reply = { id: crypto.randomUUID(), role: "assistant", text: result.answer, sources: result.sources };
+    } catch (exc) {
+      reply = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: exc instanceof Error ? `I could not reach the cluster data: ${exc.message}` : "Something went wrong.",
+      };
+    }
+
+    setMessages((current) => [...current, reply]);
+    setThinking(false);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -685,7 +714,12 @@ function AssistantPanel() {
                   {message.role === "assistant" ? <Bot className="h-3.5 w-3.5" aria-hidden="true" /> : <User className="h-3.5 w-3.5" aria-hidden="true" />}
                 </div>
                 <div className={clsx("max-w-[85%] rounded-lg px-3 py-2 text-xs leading-5", message.role === "assistant" ? "bg-surface-hover text-content-primary" : "bg-brand/[0.16] text-content-primary")}>
-                  {message.text}
+                  <p className="whitespace-pre-wrap">{message.text}</p>
+                  {message.sources && message.sources.length > 0 ? (
+                    <p className="mt-1.5 border-t border-line pt-1 text-[10px] text-content-muted">
+                      Source: {message.sources.join(", ")}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ))}
