@@ -38,7 +38,9 @@ export type K8sPod = {
   restarts: number;
   node: string | null;
   podIp: string | null;
+  /** Container images. Use containerNames to address a container. */
   containers: string[];
+  containerNames: string[];
   createdAt: string | null;
 };
 

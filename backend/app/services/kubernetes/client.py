@@ -146,7 +146,11 @@ def _pod_summary(pod: Any) -> dict[str, Any]:
         "restarts": restarts,
         "node": pod.spec.node_name if pod.spec else None,
         "podIp": pod.status.pod_ip if pod.status else None,
+        # "containers" has always carried images; container names are what the
+        # log tail needs, so they are reported separately rather than by
+        # redefining a field the API already returns.
         "containers": [c.image for c in (pod.spec.containers or [])] if pod.spec else [],
+        "containerNames": [c.name for c in (pod.spec.containers or [])] if pod.spec else [],
         "createdAt": _age(pod),
     }
 
