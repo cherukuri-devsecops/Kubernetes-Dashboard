@@ -3,13 +3,11 @@ import {
   Bell,
   Bot,
   FileText,
-  Boxes,
   Gauge,
   LayoutDashboard,
   LifeBuoy,
   ScrollText,
   Settings,
-  SquareTerminal,
   ShieldCheck,
   Zap,
   type LucideIcon,
@@ -30,12 +28,6 @@ export const navItems: NavItem[] = [
     description: "Cluster overview and health",
   },
   {
-    label: "Kubernetes",
-    href: "/kubernetes",
-    icon: Boxes,
-    description: "Nodes, workloads, and cluster objects",
-  },
-  {
     label: "Metrics",
     href: "/metrics",
     icon: Gauge,
@@ -45,7 +37,7 @@ export const navItems: NavItem[] = [
     label: "Logs",
     href: "/logs",
     icon: ScrollText,
-    description: "Live log stream across workloads",
+    description: "Search, live tail, and pod shell",
   },
   {
     label: "Traces",
@@ -82,12 +74,6 @@ export const navItems: NavItem[] = [
     href: "/reports",
     icon: FileText,
     description: "Generated reports, schedules, and exports",
-  },
-  {
-    label: "Terminal",
-    href: "/terminal",
-    icon: SquareTerminal,
-    description: "Interactive shell inside a pod",
   },
   {
     label: "Administration",

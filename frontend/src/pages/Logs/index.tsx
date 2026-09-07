@@ -5,21 +5,21 @@ import clsx from "clsx";
 import { LevelBadge } from "@/components/common/badges";
 import { SegmentedTabs } from "@/components/common/SegmentedTabs";
 import { searchLogs, streamPodLogs, type LogEntry, type LogLevel } from "@/services/logs";
-import { fetchNamespaces, fetchPods, type K8sPod } from "@/services/kubernetes";
+import { PodSelector } from "@/components/pods/PodSelector";
+import { usePodSelection } from "@/components/pods/usePodSelection";
+import { PodTerminal } from "@/components/terminal/PodTerminal";
+import { fetchExecConfig, type ExecConfig } from "@/services/exec";
 
 const LEVELS: LogLevel[] = ["debug", "info", "warn", "error"];
 const REFRESH_INTERVAL_MS = 5000;
 const RANGE_MINUTES = 30;
 const LIMIT = 300;
 
-type ViewMode = "search" | "tail";
+type ViewMode = "search" | "tail" | "shell";
 
 /** Lines held in the live tail before the oldest are dropped. */
 const TAIL_CAP = 2000;
 const TAIL_LINES = 200;
-
-const selectClass =
-  "h-8 min-w-0 rounded-md border border-line bg-surface-hover/60 px-2 text-xs text-content-primary outline-none focus:border-brand/50 focus:ring-2 focus:ring-brand/20";
 
 type TailLine = { id: number; text: string };
 
@@ -97,8 +97,18 @@ export function LogsPage() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<LogEntry | null>(null);
+  const [execConfig, setExecConfig] = useState<ExecConfig | null>(null);
+  // One pod selection shared by the tail and the shell, so switching between
+  // them keeps whatever pod you were already looking at.
+  const selection = usePodSelection(execConfig?.allowedNamespaces ?? []);
   const queryRef = useRef(query);
   queryRef.current = query;
+
+  useEffect(() => {
+    fetchExecConfig()
+      .then(setExecConfig)
+      .catch(() => setExecConfig({ enabled: false, allowedNamespaces: [], shells: [] }));
+  }, []);
 
   useEffect(() => {
     if (mode !== "search") return;
@@ -179,7 +189,9 @@ export function LogsPage() {
           <p className="mt-0.5 text-xs text-content-muted">
             {mode === "search"
               ? `Indexed history from Loki, last ${RANGE_MINUTES} minutes.`
-              : "Live tail straight from the Kubernetes API, like kubectl logs -f."}
+              : mode === "tail"
+                ? "Live tail straight from the Kubernetes API, like kubectl logs -f."
+                : "An interactive shell inside the container, like kubectl exec -it."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -190,6 +202,7 @@ export function LogsPage() {
             options={[
               { key: "search", label: "Search" },
               { key: "tail", label: "Live tail" },
+              { key: "shell", label: "Shell" },
             ]}
           />
           {mode === "search" ? (
@@ -217,7 +230,22 @@ export function LogsPage() {
         </div>
       </div>
 
-      {mode === "tail" ? <LiveTail /> : (
+      {mode === "tail" ? (
+        <LiveTail
+          namespace={selection.namespace}
+          pod={selection.pod}
+          container={selection.container}
+          controls={<PodSelector selection={selection} />}
+        />
+      ) : mode === "shell" ? (
+        <PodTerminal
+          namespace={selection.namespace}
+          pod={selection.pod}
+          container={selection.container}
+          config={execConfig}
+          controls={<PodSelector selection={selection} />}
+        />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)_280px]">
         <aside className="hidden flex-col gap-4 rounded-lg border border-line bg-surface p-3 xl:flex">
           <div className="flex items-center justify-between">
@@ -353,12 +381,16 @@ export function LogsPage() {
 
 /** Tails one pod's logs live from the Kubernetes API, the way `kubectl logs -f`
  * does — separate from the Loki search above, which is historical and indexed. */
-function LiveTail() {
-  const [namespaces, setNamespaces] = useState<string[]>([]);
-  const [namespace, setNamespace] = useState("");
-  const [pods, setPods] = useState<K8sPod[]>([]);
-  const [pod, setPod] = useState("");
-  const [container, setContainer] = useState("");
+type LiveTailProps = {
+  namespace: string;
+  pod: string;
+  container?: string;
+  controls: React.ReactNode;
+};
+
+/** Tails one pod's logs live from the Kubernetes API, the way `kubectl logs -f`
+ * does — separate from the Loki search, which is historical and indexed. */
+function LiveTail({ namespace, pod, container, controls }: LiveTailProps) {
   const [lines, setLines] = useState<TailLine[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -368,40 +400,14 @@ function LiveTail() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lineId = useRef(0);
 
+  // Stop the stream when this unmounts or the target changes, so the backend can
+  // release its reader thread and connection to the API server.
   useEffect(() => {
-    fetchNamespaces()
-      .then((list) => setNamespaces(list.map((item) => item.name)))
-      .catch(() => setNamespaces([]));
-  }, []);
-
-  useEffect(() => {
-    if (!namespace) {
-      setPods([]);
-      return;
-    }
-    let cancelled = false;
-    fetchPods(namespace)
-      .then((list) => {
-        if (cancelled) return;
-        setPods(list);
-        setPod((current) => (list.some((item) => item.name === current) ? current : ""));
-      })
-      .catch(() => {
-        if (!cancelled) setPods([]);
-      });
     return () => {
-      cancelled = true;
+      abortRef.current?.abort();
+      abortRef.current = null;
     };
-  }, [namespace]);
-
-  const containerNames = useMemo(
-    () => pods.find((item) => item.name === pod)?.containerNames ?? [],
-    [pods, pod],
-  );
-
-  // Stop the stream when the component goes away, so the backend can release
-  // its reader thread and the connection to the API server.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  }, [namespace, pod, container]);
 
   useEffect(() => {
     if (!follow) return;
@@ -446,68 +452,7 @@ function LiveTail() {
   return (
     <section className="flex min-w-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-3">
-        <label className="flex items-center gap-1.5">
-          <span className="text-xs text-content-muted">Namespace</span>
-          <select
-            value={namespace}
-            onChange={(event) => {
-              stop();
-              setNamespace(event.target.value);
-              setPod("");
-              setContainer("");
-            }}
-            className={selectClass}
-          >
-            <option value="">Select…</option>
-            {namespaces.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex items-center gap-1.5">
-          <span className="text-xs text-content-muted">Pod</span>
-          <select
-            value={pod}
-            onChange={(event) => {
-              stop();
-              setPod(event.target.value);
-              setContainer("");
-            }}
-            disabled={!namespace}
-            className={clsx(selectClass, "max-w-[18rem]", !namespace && "opacity-50")}
-          >
-            <option value="">Select…</option>
-            {pods.map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {containerNames.length > 1 ? (
-          <label className="flex items-center gap-1.5">
-            <span className="text-xs text-content-muted">Container</span>
-            <select
-              value={container}
-              onChange={(event) => {
-                stop();
-                setContainer(event.target.value);
-              }}
-              className={selectClass}
-            >
-              <option value="">Default</option>
-              {containerNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+        {controls}
 
         <button
           type="button"
