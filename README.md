@@ -42,10 +42,25 @@ The dashboard holds no fixtures or generated sample data. Every figure on screen
 | Global search | `/api/search` | Kubernetes API |
 | Notifications | `/api/alerts` + `/api/events` | Firing alerts and Warning events |
 | Assistant | `/api/ai/query` | Whichever of the above answers the question, named in the reply |
+| Terminal | `/api/exec/pod` | An interactive shell in the pod, over the Kubernetes exec API |
 
 ### Alerting rules
 
 Prometheus ships with no alerting rules of its own, so the chart installs a rule set (`alert-rules.yml` in the Prometheus ConfigMap) covering node readiness and pressure, crash-looping and non-running pods, degraded deployments, pending PVCs, and dead scrape targets. The same rules are mounted into the `docker compose` Prometheus from `monitoring/prometheus/alert-rules.yml`. Without them the Alerts page correctly shows that nothing is configured.
+
+### Pod terminal
+
+The Terminal page opens a real shell inside a running container over a WebSocket, the same thing `kubectl exec -it` does. It is **enabled by default** (`exec.enabled` in the chart's values).
+
+Understand what that grants before leaving it on: the backend gets `create` on `pods/exec`, so **anyone who can sign in to the dashboard can run commands in any pod the backend can reach**, including reading any secret mounted into those pods. Dashboard login is the only thing standing in front of that, so it should not be left on the demo credentials on a reachable address.
+
+To constrain it:
+
+- `exec.enabled: false` removes both the terminal and the RBAC grant
+- `exec.allowedNamespaces: [observability]` confines the terminal to named namespaces
+- `exec.shells` sets the shell fallback order (first one present in the image wins)
+
+Every session is written to the backend log with the user, namespace, pod, and container.
 
 ### Assistant
 

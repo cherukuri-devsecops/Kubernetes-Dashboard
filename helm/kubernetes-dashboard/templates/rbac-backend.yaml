@@ -29,6 +29,15 @@ rules:
     resources:
       - pods/log
     verbs: ["get"]
+{{- if .Values.exec.enabled }}
+  # Interactive pod exec. This is a write grant: it allows running arbitrary
+  # commands in any pod this role can reach, which includes reading whatever
+  # secrets those pods have mounted. Only added when exec is switched on.
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+    verbs: ["create", "get"]
+{{- end }}
   # Read-only RBAC introspection, for the Admin page and the RBAC audit report.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources:

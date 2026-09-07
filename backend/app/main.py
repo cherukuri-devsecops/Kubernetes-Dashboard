@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import ai, alerts, auth, events, incidents, kubernetes, logs, metrics, reports, search, traces
+from app.api import ai, alerts, auth, events, exec as exec_api, incidents, kubernetes, logs, metrics, reports, search, traces
 from app.api import health
 from app.api.health import build_health_response
 from app.config import Settings, get_settings
@@ -78,6 +78,7 @@ app.include_router(traces.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(exec_api.router, prefix="/api")
 
 
 @app.get("/", tags=["system"])

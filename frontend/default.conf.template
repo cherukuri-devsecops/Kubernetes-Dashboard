@@ -14,6 +14,24 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # The pod terminal is a WebSocket, which only works if the upgrade handshake
+  # is forwarded; without these headers nginx answers the upgrade with a plain
+  # 200 and the terminal never connects.
+  location /api/exec/pod {
+    proxy_pass ${BACKEND_ORIGIN}/api/exec/pod;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    # An idle shell must not be dropped mid-session.
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+  }
+
   # Live pod log tailing is a long-lived SSE stream, so it needs its own rules:
   # buffering would hold lines back until the pod went quiet, and the default
   # 60s read timeout would drop the connection whenever a pod logs nothing.

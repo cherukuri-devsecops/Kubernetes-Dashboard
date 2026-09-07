@@ -242,3 +242,43 @@ async def require_user(
     if settings.use_external_auth:
         return await fetch_external_user(credentials.credentials, settings)
     return decode_access_token(credentials.credentials, settings)
+
+
+# WebSocket close code for an auth failure ("policy violation").
+_WS_CLOSE_POLICY = 1008
+_WS_BEARER_PROTOCOL = "bearer"
+
+
+async def authenticate_websocket(websocket: Any, settings: Settings) -> AuthenticatedUser | None:
+    """Authenticates a WebSocket and accepts it, or closes it and returns None.
+
+    Browsers cannot set an Authorization header on a WebSocket, so the token is
+    offered as a subprotocol — `new WebSocket(url, ["bearer", "<token>"])` — and
+    the server echoes the "bearer" protocol back to complete the handshake. The
+    token travels in a header rather than the URL, so it stays out of access logs.
+    """
+    offered = [
+        value.strip()
+        for value in (websocket.headers.get("sec-websocket-protocol") or "").split(",")
+        if value.strip()
+    ]
+
+    token = ""
+    if len(offered) >= 2 and offered[0] == _WS_BEARER_PROTOCOL:
+        token = offered[1]
+
+    # Accept first so a rejection can carry a reason the browser can surface.
+    await websocket.accept(subprotocol=_WS_BEARER_PROTOCOL if token else None)
+
+    if not token:
+        await websocket.close(code=_WS_CLOSE_POLICY, reason="Missing bearer token")
+        return None
+
+    try:
+        if settings.use_external_auth:
+            return await fetch_external_user(token, settings)
+        return decode_access_token(token, settings)
+    except HTTPException as exc:
+        # Close frames cap the reason at 123 bytes (RFC 6455).
+        await websocket.close(code=_WS_CLOSE_POLICY, reason=str(exc.detail)[:120])
+        return None

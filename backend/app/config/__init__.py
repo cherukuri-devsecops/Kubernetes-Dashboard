@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # failing (5xx/unreachable). Explicit 401/403 rejections ignore this.
     auth_cache_stale_seconds: int = 300
 
+    # Interactive pod exec. This is the only write path the dashboard has: it
+    # needs create on pods/exec, which is enough to read any secret mounted into
+    # a reachable pod, so it is off unless a deployment turns it on.
+    exec_enabled: bool = False
+    # Comma-separated. Empty means every namespace the ServiceAccount can reach.
+    exec_allowed_namespaces: str = ""
+    # Tried in order; the first shell present in the image wins.
+    exec_shells: str = "/bin/bash,/bin/sh"
+
     # Writes sample incidents into an empty database. Dev stacks only.
     seed_demo_data: bool = False
 
@@ -60,6 +69,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def exec_allowed_namespace_list(self) -> list[str]:
+        return [ns.strip() for ns in self.exec_allowed_namespaces.split(",") if ns.strip()]
+
+    @property
+    def exec_shell_list(self) -> list[str]:
+        return [shell.strip() for shell in self.exec_shells.split(",") if shell.strip()]
 
     @property
     def use_external_auth(self) -> bool:

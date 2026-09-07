@@ -18,6 +18,9 @@ data:
   AUTH_API_ME_PATH: {{ .Values.auth.apiMePath | quote }}
   AUTH_API_TIMEOUT_SECONDS: {{ .Values.auth.apiTimeoutSeconds | quote }}
   AUTH_JWT_ALGORITHM: {{ .Values.auth.jwtAlgorithm | quote }}
+  EXEC_ENABLED: {{ .Values.exec.enabled | quote }}
+  EXEC_ALLOWED_NAMESPACES: {{ join "," .Values.exec.allowedNamespaces | quote }}
+  EXEC_SHELLS: {{ join "," .Values.exec.shells | quote }}
   PROMETHEUS_URL: 'http://{{ include "kubernetes-dashboard.prometheusName" . }}:9090'
   LOKI_URL: 'http://{{ include "kubernetes-dashboard.lokiName" . }}:3100'
   TEMPO_URL: 'http://{{ include "kubernetes-dashboard.tempoName" . }}:3200'

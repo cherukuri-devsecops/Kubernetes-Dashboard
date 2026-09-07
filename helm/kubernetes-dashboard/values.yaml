@@ -37,6 +37,20 @@ auth:
   demoUserPassword: admin123
   demoUserName: Platform Admin
 
+# Interactive pod terminal. Enabled here by choice: it grants the backend create
+# on pods/exec, so anyone who can log in to the dashboard can run commands in
+# any pod it can reach — which includes reading secrets mounted into those pods.
+# Dashboard login is therefore the only thing guarding cluster-wide shell access.
+# Set enabled: false to drop both the terminal and the RBAC grant, or use
+# allowedNamespaces below to confine it.
+exec:
+  enabled: true
+  # Empty means every namespace. Set a list to confine the terminal.
+  allowedNamespaces: []
+  shells:
+    - /bin/bash
+    - /bin/sh
+
 secrets:
   name: ""
   databaseUrl: 'postgresql://dashboard:dashboard@{{ include "kubernetes-dashboard.postgresName" . }}:5432/dashboard'

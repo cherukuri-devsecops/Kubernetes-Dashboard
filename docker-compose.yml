@@ -137,6 +137,10 @@ services:
       AUTH_API_TIMEOUT_SECONDS: ${AUTH_API_TIMEOUT_SECONDS:-5}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       AUTH_JWT_ALGORITHM: ${AUTH_JWT_ALGORITHM:-HS256}
+      # Matches the Helm chart's default so the terminal behaves the same locally.
+      EXEC_ENABLED: ${EXEC_ENABLED:-true}
+      EXEC_ALLOWED_NAMESPACES: ${EXEC_ALLOWED_NAMESPACES:-}
+      EXEC_SHELLS: ${EXEC_SHELLS:-/bin/bash,/bin/sh}
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
       DEMO_USER_EMAIL: admin@example.com
       DEMO_USER_PASSWORD: admin123
