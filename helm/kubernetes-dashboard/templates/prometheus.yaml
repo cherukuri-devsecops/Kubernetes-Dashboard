@@ -49,175 +49,6 @@ subjects:
     namespace: {{ include "kubernetes-dashboard.namespace" . }}
 ---
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "kubernetes-dashboard.prometheusName" . }}-config
-  namespace: {{ include "kubernetes-dashboard.namespace" . }}
-  labels:
-    {{- include "kubernetes-dashboard.labels" . | nindent 4 }}
-    app.kubernetes.io/component: prometheus
-data:
-  alert-rules.yml: |
-    groups:
-      - name: nodes
-        rules:
-          - alert: NodeNotReady
-            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Node {{ `{{ $labels.node }}` }} is not Ready"
-              description: "Node {{ `{{ $labels.node }}` }} has not reported Ready for more than 5 minutes."
-
-          - alert: NodeHighCpuUsage
-            expr: (1 - avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 0.9
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "High CPU on node {{ `{{ $labels.node }}` }}"
-              description: "Node {{ `{{ $labels.node }}` }} CPU has been above 90% for 10 minutes."
-
-          - alert: NodeHighMemoryUsage
-            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "High memory on node {{ `{{ $labels.node }}` }}"
-              description: "Node {{ `{{ $labels.node }}` }} memory has been above 90% for 10 minutes."
-
-          - alert: NodeDiskSpaceLow
-            expr: (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) > 0.85
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Low disk space on node {{ `{{ $labels.node }}` }}"
-              description: "Root filesystem on {{ `{{ $labels.node }}` }} is more than 85% full."
-
-      - name: workloads
-        rules:
-          - alert: PodCrashLooping
-            expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Pod {{ `{{ $labels.namespace }}/{{ $labels.pod }}` }} is crash looping"
-              description: "Container {{ `{{ $labels.container }}` }} restarted more than 3 times in 15 minutes."
-
-          - alert: PodNotReady
-            expr: kube_pod_status_phase{phase=~"Pending|Unknown|Failed"} == 1
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Pod {{ `{{ $labels.namespace }}/{{ $labels.pod }}` }} is {{ `{{ $labels.phase }}` }}"
-              description: "Pod has been in a non-running phase for more than 15 minutes."
-
-          - alert: DeploymentReplicasMismatch
-            expr: kube_deployment_spec_replicas != kube_deployment_status_replicas_available
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: "Deployment {{ `{{ $labels.namespace }}/{{ $labels.deployment }}` }} is degraded"
-              description: "Available replicas have not matched the desired count for 15 minutes."
-
-          - alert: PersistentVolumeClaimPending
-            expr: kube_persistentvolumeclaim_status_phase{phase="Pending"} == 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: "PVC {{ `{{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }}` }} is pending"
-              description: "The claim has been unbound for more than 10 minutes."
-
-      - name: dashboard
-        rules:
-          - alert: DashboardBackendDown
-            expr: up{job="backend"} == 0
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Dashboard backend is down"
-              description: "Prometheus has failed to scrape the dashboard backend for 5 minutes."
-
-          - alert: ScrapeTargetDown
-            expr: up == 0
-            for: 10m
-            labels:
-              severity: info
-            annotations:
-              summary: "Scrape target {{ `{{ $labels.job }}` }} is down"
-              description: "Target {{ `{{ $labels.instance }}` }} of job {{ `{{ $labels.job }}` }} has been unreachable for 10 minutes."
-  prometheus.yml: |
-    global:
-      scrape_interval: 15s
-      evaluation_interval: 15s
-
-    rule_files:
-      - /etc/prometheus/alert-rules.yml
-
-    scrape_configs:
-      - job_name: prometheus
-        static_configs:
-          - targets: ["localhost:9090"]
-
-      - job_name: backend
-        static_configs:
-          - targets: ["{{ include "kubernetes-dashboard.backendName" . }}:{{ .Values.backend.service.port }}"]
-
-      - job_name: kubelet-cadvisor
-        scheme: https
-        tls_config:
-          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          insecure_skip_verify: true
-        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-        kubernetes_sd_configs:
-          - role: node
-        relabel_configs:
-          - target_label: __address__
-            replacement: kubernetes.default.svc:443
-          - source_labels: [__meta_kubernetes_node_name]
-            regex: (.+)
-            target_label: __metrics_path__
-            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
-
-      - job_name: node-exporter
-        kubernetes_sd_configs:
-          - role: endpoints
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_namespace]
-            action: keep
-            regex: {{ include "kubernetes-dashboard.namespace" . }}
-          - source_labels: [__meta_kubernetes_endpoint_port_name]
-            action: keep
-            regex: metrics
-          - source_labels: [__meta_kubernetes_service_name]
-            action: keep
-            regex: {{ include "kubernetes-dashboard.nodeExporterName" . }}
-          - source_labels: [__meta_kubernetes_pod_node_name]
-            target_label: node
-
-      - job_name: kube-state-metrics
-        kubernetes_sd_configs:
-          - role: endpoints
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_namespace]
-            action: keep
-            regex: {{ include "kubernetes-dashboard.namespace" . }}
-          - source_labels: [__meta_kubernetes_endpoint_port_name]
-            action: keep
-            regex: http-metrics
-          - source_labels: [__meta_kubernetes_service_name]
-            action: keep
-            regex: {{ include "kubernetes-dashboard.kubeStateMetricsName" . }}
----
-apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "kubernetes-dashboard.prometheusName" . }}
@@ -251,6 +82,12 @@ spec:
       app.kubernetes.io/component: prometheus
   template:
     metadata:
+      annotations:
+        # Prometheus reads its config and rule files once, at startup, and does
+        # not watch them. Without this the pod keeps running the old rules after
+        # a ConfigMap change and the Alerts page silently stays empty, so tie the
+        # pod's identity to the config and let a change roll it.
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus-config.yaml") . | sha256sum }}
       labels:
         {{- include "kubernetes-dashboard.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: prometheus
