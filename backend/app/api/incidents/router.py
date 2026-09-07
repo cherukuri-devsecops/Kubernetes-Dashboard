@@ -3,12 +3,14 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.auth.security import AuthenticatedUser, require_user
+from app.auth.security import AuthenticatedUser, require_role, require_user
 from app.config import Settings, get_settings
 from app.services.postgres import incidents as repository
 from app.services.postgres.client import PostgresUnavailableError
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
+
+_require_incident_writer = require_role("platform-admin", "incident-commander", "responder")
 
 IncidentSeverity = Literal["sev1", "sev2", "sev3"]
 IncidentStatus = Literal["open", "investigating", "mitigated", "resolved"]
@@ -83,7 +85,7 @@ async def get_incident(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_incident(
     payload: CreateIncidentRequest,
-    user: AuthenticatedUser = Depends(require_user),
+    user: AuthenticatedUser = Depends(_require_incident_writer),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     try:
@@ -106,7 +108,7 @@ async def create_incident(
 async def update_status(
     incident_id: str,
     payload: UpdateStatusRequest,
-    user: AuthenticatedUser = Depends(require_user),
+    user: AuthenticatedUser = Depends(_require_incident_writer),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     note = payload.note or _STATUS_NOTES.get(payload.status, f"Status changed to {payload.status}")
@@ -123,7 +125,7 @@ async def update_status(
 async def add_update(
     incident_id: str,
     payload: AddUpdateRequest,
-    user: AuthenticatedUser = Depends(require_user),
+    user: AuthenticatedUser = Depends(_require_incident_writer),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     try:

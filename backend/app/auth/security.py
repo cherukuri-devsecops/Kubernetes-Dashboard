@@ -244,6 +244,22 @@ async def require_user(
     return decode_access_token(credentials.credentials, settings)
 
 
+def require_role(*allowed_roles: str):
+    """Return a FastAPI dependency that enforces role-based access control."""
+
+    async def _check(
+        user: AuthenticatedUser = Depends(require_user),
+    ) -> AuthenticatedUser:
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
+
+    return _check
+
+
 # WebSocket close code for an auth failure ("policy violation").
 _WS_CLOSE_POLICY = 1008
 _WS_BEARER_PROTOCOL = "bearer"
